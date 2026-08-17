@@ -509,8 +509,9 @@ import subprocess
 from scans.scanners.base import ScannerContext
 from scans.scanners.placeholders.placeholder_scanner import ScopeException
 from scans.scanners.network.host_discovery import HostDiscovery
-from scans.scanners.network.nmap_runner import NmapRunner
-from scans.scanners.network.nmap_parser import NmapParser
+import socket
+from scans.scanners.network.resolver import DNSResolver
+from scans.scanners.network.socket_scanner import SocketScanner
 from scans.scanners.network.network_recon import NetworkReconScanner
 from scans.services.execution_service import ExecutionService
 from assets.models import Asset
@@ -603,39 +604,59 @@ class NetworkScannerTests(APITestCase):
             status='QUEUED'
         )
 
-    @patch('shutil.which', return_value="/usr/bin/nmap")
-    @patch('subprocess.run')
-    def test_nmap_availability_and_version(self, mock_run, mock_which):
-        # Mock successful version output
-        mock_proc = MagicMock()
-        mock_proc.returncode = 0
-        mock_proc.stdout = "Nmap version 7.99 ( https://nmap.org )\nPlatform: i686-pc-windows"
-        mock_run.return_value = mock_proc
+    @patch('socket.getaddrinfo')
+    def test_resolver_success(self, mock_getaddrinfo):
+        mock_getaddrinfo.return_value = [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, '', ('93.184.216.34', 0))
+        ]
+        ips = DNSResolver.resolve("example.com")
+        self.assertEqual(ips, ["93.184.216.34"])
 
-        self.assertTrue(NmapRunner.is_nmap_installed())
-        self.assertEqual(NmapRunner.get_nmap_version(), "Nmap version 7.99 ( https://nmap.org )")
+    @patch('socket.getaddrinfo')
+    def test_resolver_multiple_ips(self, mock_getaddrinfo):
+        mock_getaddrinfo.return_value = [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, '', ('93.184.216.34', 0)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, '', ('93.184.216.35', 0))
+        ]
+        ips = DNSResolver.resolve("example.com")
+        self.assertEqual(sorted(ips), ["93.184.216.34", "93.184.216.35"])
 
-    @patch('shutil.which', return_value="/usr/bin/nmap")
-    @patch('subprocess.Popen')
-    def test_nmap_command_construction(self, mock_popen, mock_which):
-        mock_process = MagicMock()
-        mock_process.poll.return_value = 0
-        mock_process.communicate.return_value = (MOCK_NMAP_XML_SUCCESS, "")
-        mock_process.returncode = 0
-        mock_popen.return_value = mock_process
+    @patch('socket.getaddrinfo', side_effect=socket.gaierror(-2, "Name or service not known"))
+    def test_resolver_dns_failure(self, mock_getaddrinfo):
+        ips = DNSResolver.resolve("nonexistent-domain-xyz.com")
+        self.assertEqual(ips, [])
 
-        runner = NmapRunner()
-        res = runner.run_scan(target="127.0.0.1", port_range="1-1024")
-        
-        self.assertEqual(res["status"], "success")
-        self.assertEqual(res["xml_output"], MOCK_NMAP_XML_SUCCESS)
-        
-        # Verify args passed to Popen contain the correct Nmap flags
-        called_args = mock_popen.call_args[0][0]
-        self.assertEqual(called_args, ["nmap", "-sT", "-p", "1-1024", "-oX", "-", "127.0.0.1"])
+    def test_resolver_invalid_hostname(self):
+        ips = DNSResolver.resolve("")
+        self.assertEqual(ips, [])
+
+    @patch('socket.socket.connect_ex', return_value=0)
+    def test_socket_scanner_open_port(self, mock_connect):
+        scanner = SocketScanner(start_port=80, end_port=80)
+        res = scanner.scan_port("127.0.0.1", 80)
+        self.assertEqual(res["state"], "OPEN")
+
+    @patch('socket.socket.connect_ex', return_value=111)  # ECONNREFUSED
+    def test_socket_scanner_closed_port(self, mock_connect):
+        scanner = SocketScanner(start_port=80, end_port=80)
+        res = scanner.scan_port("127.0.0.1", 80)
+        self.assertEqual(res["state"], "CLOSED")
+
+    @patch('socket.socket.connect_ex', side_effect=socket.timeout)
+    def test_socket_scanner_timeout(self, mock_connect):
+        scanner = SocketScanner(start_port=80, end_port=80)
+        res = scanner.scan_port("127.0.0.1", 80)
+        self.assertEqual(res["state"], "TIMEOUT")
+
+    @patch('socket.socket.connect_ex', return_value=0)
+    def test_socket_scanner_concurrent_scanning(self, mock_connect):
+        scanner = SocketScanner(start_port=80, end_port=90, concurrency=5)
+        results = scanner.scan_host("127.0.0.1")
+        self.assertEqual(len(results), 11)
+        self.assertEqual(scanner.ports_checked, 11)
+        self.assertEqual(scanner.open_ports, 11)
 
     def test_scope_guard_target_enforcement(self):
-        # Validate that within scope target scans pass
         scanner = NetworkReconScanner(ScannerContext(self.job))
         scanner.targets_to_scan = ["127.0.0.1", "192.168.1.5"]
         # Should not raise exception
@@ -647,82 +668,34 @@ class NetworkScannerTests(APITestCase):
         with self.assertRaises(ScopeException):
             scanner2.validate(self.assessment, self.project)
 
-    def test_xml_parsing_cases(self):
-        # Parse single host open/closed ports
-        hosts = NmapParser.parse_xml(MOCK_NMAP_XML_SUCCESS)
-        self.assertEqual(len(hosts), 1)
-        host = hosts[0]
-        self.assertEqual(host["ip"], "127.0.0.1")
-        self.assertEqual(host["status"], "up")
-        self.assertIn("localhost", host["hostnames"])
+    @patch('socket.socket.connect_ex', return_value=111)
+    def test_socket_scanner_cancellation(self, mock_connect):
+        scanner = SocketScanner(start_port=80, end_port=100)
+        scanner.cancel()
+        res = scanner.scan_port("127.0.0.1", 80)
+        self.assertIsNone(res)
+
+        results = scanner.scan_host("127.0.0.1")
+        self.assertEqual(len(results), 0)
+
+    @patch('scans.scanners.network.socket_scanner.NETWORK_SCAN_END_PORT', 3306)
+    @patch('scans.scanners.network.network_recon.NETWORK_SCAN_END_PORT', 3306)
+    @patch('scans.publisher.ScanEventPublisher.publish')
+    @patch('socket.socket.connect_ex')
+    @patch('socket.getaddrinfo')
+    def test_end_to_end_assessment_execution_assets_and_findings(self, mock_getaddrinfo, mock_connect, mock_publish):
+        # Mock DNS resolution
+        mock_getaddrinfo.return_value = [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, '', ('127.0.0.1', 0))
+        ]
         
-        open_ports = [p for p in host["ports"] if p["state"] == "open"]
-        self.assertEqual(len(open_ports), 2)
-        self.assertEqual(open_ports[0]["port"], 80)
-        self.assertEqual(open_ports[0]["service"], "http")
-        self.assertEqual(open_ports[1]["port"], 3306)
-        self.assertEqual(open_ports[1]["service"], "mysql")
-
-        closed_ports = [p for p in host["ports"] if p["state"] == "closed"]
-        self.assertEqual(len(closed_ports), 1)
-        self.assertEqual(closed_ports[0]["port"], 443)
-
-        # Parse multiple hosts
-        hosts_multi = NmapParser.parse_xml(MOCK_NMAP_XML_MULTIPLE)
-        self.assertEqual(len(hosts_multi), 2)
-        self.assertEqual(hosts_multi[0]["ip"], "127.0.0.1")
-        self.assertEqual(hosts_multi[1]["ip"], "192.168.1.1")
-
-    def test_invalid_xml_handling(self):
-        with self.assertRaises(ValueError):
-            NmapParser.parse_xml("<invalid xml>")
-
-    @patch('shutil.which', return_value="/usr/bin/nmap")
-    @patch('subprocess.Popen')
-    def test_nmap_timeout_handling(self, mock_popen, mock_which):
-        mock_process = MagicMock()
-        # Mock poll returning None (still running)
-        mock_process.poll.return_value = None
-        mock_popen.return_value = mock_process
-
-        runner = NmapRunner(timeout=0.1)
-        res = runner.run_scan(target="127.0.0.1", port_range="1-1024")
-        self.assertEqual(res["status"], "timeout")
-        
-        import os, signal
-        if os.name == 'nt':
-            mock_process.send_signal.assert_called_once_with(signal.CTRL_BREAK_EVENT)
-        else:
-            mock_process.terminate.assert_called_once()
-
-    @patch('shutil.which', return_value="/usr/bin/nmap")
-    @patch('subprocess.Popen')
-    def test_nmap_cancellation(self, mock_popen, mock_which):
-        mock_process = MagicMock()
-        mock_process.poll.return_value = None
-        mock_popen.return_value = mock_process
-
-        runner = NmapRunner()
-        # Cancel check returns True immediately
-        res = runner.run_scan(target="127.0.0.1", port_range="1-1024", cancel_check=lambda: True)
-        self.assertEqual(res["status"], "cancelled")
-        
-        import os, signal
-        if os.name == 'nt':
-            mock_process.send_signal.assert_called_once_with(signal.CTRL_BREAK_EVENT)
-        else:
-            mock_process.terminate.assert_called_once()
-
-    @patch('scans.scanners.network.nmap_runner.NmapRunner.is_nmap_installed', return_value=True)
-    @patch('scans.scanners.network.nmap_runner.NmapRunner.run_scan')
-    def test_end_to_end_assessment_execution_assets_and_findings(self, mock_run_scan, mock_installed):
-        # Setup mock run success
-        mock_run_scan.return_value = {
-            "status": "success",
-            "xml_output": MOCK_NMAP_XML_SUCCESS,
-            "stderr": "",
-            "error_message": ""
-        }
+        # Mock port scanning: port 80 and 3306 are open, others are closed/refused
+        def mock_connect_ex(addr):
+            port = addr[1]
+            if port in (80, 3306):
+                return 0
+            return 111
+        mock_connect.side_effect = mock_connect_ex
 
         # Clear CIDR scope to only test 127.0.0.1
         self.scope_cidr.delete()
@@ -733,13 +706,10 @@ class NetworkScannerTests(APITestCase):
 
         # Assert completed successfully
         self.assertEqual(job.status, 'COMPLETED')
-        self.assertEqual(job.result["hosts_scanned"], 1)
-        self.assertEqual(job.result["open_ports"], 2)
-
+        
         # Verify DB assets populated
         ip_assets = Asset.objects.filter(asset_type='IP', value='127.0.0.1')
         self.assertTrue(ip_assets.exists())
-        self.assertEqual(ip_assets.first().metadata["hostname"], "localhost")
 
         port_assets = Asset.objects.filter(asset_type='PORT')
         self.assertEqual(port_assets.count(), 2)
@@ -759,15 +729,21 @@ class NetworkScannerTests(APITestCase):
             status='QUEUED'
         )
         ExecutionService.execute_job(job_retry.id)
-        # Port asset count should remain 2 (no duplicates created)
         self.assertEqual(Asset.objects.filter(asset_type='PORT').count(), 2)
+
+        # Verify WebSocket event publication calls
+        publish_calls = [call[0][1] for call in mock_publish.call_args_list]
+        self.assertIn("scan.started", publish_calls)
+        self.assertIn("scan.dns_resolution", publish_calls)
+        self.assertIn("scan.port_open", publish_calls)
+        self.assertIn("scan.progress", publish_calls)
+        self.assertIn("scan.completed", publish_calls)
 
     def test_frontend_module_config_schema_response(self):
         url = reverse('testingmodule-list')
         response = self.client.get(url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         
-        # Verify network_recon has empty configuration_schema
         network_recon_mod = next(m for m in response.data if m['key'] == 'network_recon')
         self.assertEqual(network_recon_mod['configuration_schema'], {})
 

@@ -41,18 +41,20 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const [assets, setAssets]     = useState<Asset[]>([]);
   const [scans, setScans]       = useState<Scan[]>([]);
   const [findings, setFindings] = useState<Finding[]>([]);
+  const [activeScanDetails, setActiveScanDetails] = useState<Scan | null>(null);
+
+  const fetchData = async (showLoading = true) => {
+    if (showLoading) setLoading(true);
+    try {
+      const [asts, scs, fds] = await Promise.all([
+        api.getAssets(), api.getScans(), api.getFindings()
+      ]);
+      setAssets(asts); setScans(scs); setFindings(fds);
+    } catch (err) { console.error(err); }
+    finally { if (showLoading) setLoading(false); }
+  };
 
   useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true);
-      try {
-        const [asts, scs, fds] = await Promise.all([
-          api.getAssets(), api.getScans(), api.getFindings()
-        ]);
-        setAssets(asts); setScans(scs); setFindings(fds);
-      } catch (err) { console.error(err); }
-      finally { setLoading(false); }
-    };
     fetchData();
   }, [selectedProjectId]);
 
@@ -64,11 +66,155 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const filteredScans    = useMemo(() => selectedProjectId === 'all' ? scans    : scans.filter(s => s.projectId === selectedProjectId),    [scans, selectedProjectId]);
   const filteredFindings = useMemo(() => selectedProjectId === 'all' ? findings : findings.filter(f => f.projectId === selectedProjectId), [findings, selectedProjectId]);
 
+  // Find first active/queued scan in the current project context
+  const firstActiveScan = useMemo(() => {
+    return filteredScans.find(s => s.status === 'running' || s.status === 'queued');
+  }, [filteredScans]);
+
+  // WebSocket subscription for active scan progress and logs on Dashboard
+  useEffect(() => {
+    if (!firstActiveScan) {
+      setActiveScanDetails(null);
+      return;
+    }
+
+    let socket: WebSocket | null = null;
+    let reconnectTimeout: any = null;
+    let reconnectAttempts = 0;
+    const maxReconnectAttempts = 5;
+
+    // Define fallback HTTP poll
+    let pollInterval: any = null;
+    const startFallbackPoll = () => {
+      if (pollInterval) return;
+      pollInterval = setInterval(async () => {
+        try {
+          const updated = await api.getScan(firstActiveScan.id);
+          if (updated) {
+            setActiveScanDetails(updated);
+            setScans(prev => prev.map(s => s.id === updated.id ? updated : s));
+            if (updated.status === 'completed' || updated.status === 'failed' || updated.status === 'cancelled') {
+              clearInterval(pollInterval);
+              await fetchData(false);
+              setActiveScanDetails(null);
+            }
+          }
+        } catch (err) {
+          console.error("Dashboard poll error:", err);
+        }
+      }, 3000);
+    };
+
+    const stopFallbackPoll = () => {
+      if (pollInterval) {
+        clearInterval(pollInterval);
+        pollInterval = null;
+      }
+    };
+
+    const connectWebSocket = () => {
+      const wsUrl = `ws://127.0.0.1:8000/ws/assessments/${firstActiveScan.id}/`;
+      socket = new WebSocket(wsUrl);
+
+      socket.onopen = async () => {
+        reconnectAttempts = 0;
+        stopFallbackPoll();
+        
+        // Initial state sync
+        const updated = await api.getScan(firstActiveScan.id);
+        if (updated) {
+          setActiveScanDetails(updated);
+          setScans(prev => prev.map(s => s.id === updated.id ? updated : s));
+        }
+      };
+
+      socket.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          const { event: eventName, data } = payload;
+
+          setActiveScanDetails(prev => {
+            if (!prev) return null;
+            
+            const logs = prev.logs ? [...prev.logs] : [];
+            let progress = prev.progress;
+            let status = prev.status;
+            let currentPhase = prev.currentPhase;
+
+            if (eventName === 'scan.log' || eventName === 'scan.dns_resolution' || eventName === 'scan.started') {
+              const logTime = new Date().toLocaleTimeString();
+              logs.push(`[${logTime}] [INFO] ${data.message}`);
+            }
+
+            if (eventName === 'scan.progress') {
+              progress = data.progress;
+              currentPhase = data.message || 'Scanning ports...';
+            }
+
+            if (eventName === 'scan.port_open') {
+              const logTime = new Date().toLocaleTimeString();
+              logs.push(`[${logTime}] [PORT] Port ${data.port} OPEN (${data.service}) discovered.`);
+            }
+
+            // Sync overall scans list progress
+            setScans(scansList =>
+              scansList.map(s => s.id === firstActiveScan.id ? { ...s, progress, status } : s)
+            );
+
+            if (eventName === 'scan.completed' || eventName === 'scan.failed' || eventName === 'scan.cancelled') {
+              setTimeout(async () => {
+                await fetchData(false);
+                setActiveScanDetails(null);
+              }, 1000);
+            }
+
+            return {
+              ...prev,
+              logs,
+              progress,
+              status,
+              currentPhase
+            };
+          });
+        } catch (err) {
+          console.error("Dashboard failed to parse WS msg:", err);
+        }
+      };
+
+      socket.onerror = () => {
+        startFallbackPoll();
+      };
+
+      socket.onclose = () => {
+        startFallbackPoll();
+        if (reconnectAttempts < maxReconnectAttempts) {
+          const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 10000);
+          reconnectAttempts++;
+          reconnectTimeout = setTimeout(connectWebSocket, delay);
+        }
+      };
+    };
+
+    connectWebSocket();
+
+    return () => {
+      stopFallbackPoll();
+      if (socket) {
+        socket.onopen = null;
+        socket.onmessage = null;
+        socket.onerror = null;
+        socket.onclose = null;
+        socket.close();
+      }
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+    };
+  }, [firstActiveScan]);
+
   const stats = useMemo(() => {
     const open = filteredFindings.filter(f => f.status === 'open' || f.status === 'confirmed');
     return {
       targets:      filteredAssets.length,
-      activeScans:  filteredScans.filter(s => s.status === 'running').length,
+      activeScans:  filteredScans.filter(s => s.status === 'running' || s.status === 'queued').length,
       openFindings: open.length,
       critical:     open.filter(f => f.severity === 'critical').length,
       high:         open.filter(f => f.severity === 'high').length,
@@ -155,6 +301,70 @@ export const Dashboard: React.FC<DashboardProps> = ({
             Showing data across all {projects.length} project{projects.length !== 1 ? 's' : ''}.
             Select a project from the top bar to focus.
           </p>
+        </div>
+      )}
+
+      {/* Active Scan Live Monitor */}
+      {activeScanDetails && (
+        <div className="card" style={{ borderLeft: '3px solid var(--success-fg)', background: 'var(--bg-inset)', padding: 16 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, flexWrap: 'wrap', gap: 10 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div className="animate-pulse" style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--success-fg)' }} />
+              <div>
+                <h3 style={{ fontSize: 13, fontWeight: 700, color: 'var(--fg-default)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  Live Scan Execution Monitor
+                </h3>
+                <p style={{ fontSize: 11, color: 'var(--fg-muted)', fontFamily: 'JetBrains Mono, monospace', marginTop: 2 }}>
+                  TARGET: <span style={{ color: 'var(--fg-default)' }}>{activeScanDetails.target}</span>
+                </p>
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <StatusBadge status={activeScanDetails.status} />
+              <span style={{ fontSize: 12, fontWeight: 700, fontFamily: 'JetBrains Mono, monospace', color: 'var(--success-fg)' }}>
+                {activeScanDetails.progress}%
+              </span>
+            </div>
+          </div>
+
+          {/* Progress Bar */}
+          <div style={{ width: '100%', height: 4, background: 'var(--border-subtle)', borderRadius: 2, overflow: 'hidden', marginBottom: 16 }}>
+            <div
+              style={{
+                width: `${activeScanDetails.progress}%`,
+                height: '100%',
+                background: 'var(--success-fg)',
+                transition: 'width 0.3s ease-out'
+              }}
+            />
+          </div>
+
+          {/* Mini Log Console */}
+          <div style={{ background: '#000', borderRadius: 4, border: '1px solid var(--border-default)', padding: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #1c1c24', paddingBottom: 6, marginBottom: 8 }}>
+              <span style={{ fontSize: 9, fontFamily: 'JetBrains Mono, monospace', color: 'var(--fg-subtle)', textTransform: 'uppercase' }}>
+                Console Output Stream
+              </span>
+              <span style={{ fontSize: 9, fontFamily: 'JetBrains Mono, monospace', color: 'var(--success-fg)' }}>
+                ● ONLINE (2s POLL)
+              </span>
+            </div>
+            <div style={{ height: 110, overflowY: 'auto', fontFamily: 'JetBrains Mono, monospace', fontSize: 11, color: '#10b981', lineHeight: 1.6 }}>
+              {activeScanDetails.logs && activeScanDetails.logs.length > 0 ? (
+                activeScanDetails.logs.slice(-5).map((log, index) => (
+                  <div key={index} style={{ whiteSpace: 'pre-wrap' }}>{log}</div>
+                ))
+              ) : (
+                <div style={{ color: 'var(--fg-subtle)', fontStyle: 'italic' }}>Initializing scanner pipeline...</div>
+              )}
+              {(activeScanDetails.status === 'running' || activeScanDetails.status === 'queued') && (
+                <div style={{ display: 'flex', alignItems: 'center', marginTop: 2 }}>
+                  <span>&gt; Processing queue, please stand by...</span>
+                  <span className="terminal-cursor" style={{ display: 'inline-block', width: 6, height: 12, background: '#10b981', marginLeft: 4 }} />
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
 

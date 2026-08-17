@@ -91,28 +91,182 @@ export const Scans: React.FC<ScansProps> = ({ selectedProjectId, setActivePage }
     }
   }, [activeScan?.logs?.length, viewMode]);
 
-  // Live Scan execution interval simulator
+  // Load scan details (including logs) when entering detail view
   useEffect(() => {
-    let interval: any = null;
+    if (viewMode === 'detail' && activeScanId) {
+      const loadDetails = async () => {
+        try {
+          const updated = await api.getScan(activeScanId);
+          if (updated) {
+            setScans((prev) =>
+              prev.map((s) => (s.id === updated.id ? { ...updated } : s))
+            );
+          }
+        } catch (err) {
+          console.error("Failed to load active scan details:", err);
+        }
+      };
+      loadDetails();
+    }
+  }, [viewMode, activeScanId]);
 
-    if (viewMode === 'detail' && activeScan && (activeScan.status === 'running' || activeScan.status === 'queued')) {
-      interval = setInterval(async () => {
-        const updated = await api.getScan(activeScan.id);
+  // WebSocket Live Scan Updates Listener
+  useEffect(() => {
+    if (viewMode !== 'detail' || !activeScanId || !activeScan) return;
+    if (activeScan.status !== 'running' && activeScan.status !== 'queued') return;
+
+    let socket: WebSocket | null = null;
+    let reconnectTimeout: any = null;
+    let reconnectAttempts = 0;
+    const maxReconnectAttempts = 5;
+
+    // Define fallback HTTP poll just in case WebSocket fails or is disconnected
+    let pollInterval: any = null;
+    const startFallbackPoll = () => {
+      if (pollInterval) return;
+      pollInterval = setInterval(async () => {
+        const updated = await api.getScan(activeScanId);
         if (updated) {
-          // Update local state item
-          setScans((prev) =>
-            prev.map((s) => (s.id === updated.id ? { ...updated } : s))
-          );
-          // If scan completed, refetch parent listings as well
-          if (updated.status === 'completed' || updated.status === 'failed') {
+          setScans(prev => prev.map(s => s.id === updated.id ? { ...updated } : s));
+          if (updated.status === 'completed' || updated.status === 'failed' || updated.status === 'cancelled') {
+            clearInterval(pollInterval);
             await fetchScansData();
           }
         }
-      }, 2000);
-    }
+      }, 3000);
+    };
+
+    const stopFallbackPoll = () => {
+      if (pollInterval) {
+        clearInterval(pollInterval);
+        pollInterval = null;
+      }
+    };
+
+    const connectWebSocket = () => {
+      // Connect to Daphne/Channels websocket router
+      const wsUrl = `ws://127.0.0.1:8000/ws/assessments/${activeScanId}/`;
+      socket = new WebSocket(wsUrl);
+
+      socket.onopen = async () => {
+        reconnectAttempts = 0;
+        stopFallbackPoll();
+        
+        // Sync final/current scan state upon successful socket connection
+        const updated = await api.getScan(activeScanId);
+        if (updated) {
+          setScans(prev => prev.map(s => s.id === updated.id ? { ...updated } : s));
+        }
+      };
+
+      socket.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          const { event: eventName, data } = payload;
+          
+          setScans((prev) =>
+            prev.map((s) => {
+              if (s.id !== String(activeScanId)) return s;
+              
+              const logs = s.logs ? [...s.logs] : [];
+              let progress = s.progress;
+              let status = s.status;
+              let currentPhase = s.currentPhase;
+              let findingsCount = { ...s.findingsCount };
+
+              if (eventName === 'scan.log' || eventName === 'scan.dns_resolution' || eventName === 'scan.started') {
+                const logTime = new Date().toLocaleTimeString();
+                logs.push(`[${logTime}] [INFO] ${data.message}`);
+              }
+
+              if (eventName === 'scan.progress') {
+                progress = data.progress;
+                currentPhase = data.message || 'Scanning ports...';
+              }
+
+              if (eventName === 'scan.port_open') {
+                const logTime = new Date().toLocaleTimeString();
+                logs.push(`[${logTime}] [PORT] Port ${data.port} OPEN (${data.service}) discovered.`);
+              }
+
+              if (eventName === 'scan.completed') {
+                status = 'completed';
+                progress = 100;
+                currentPhase = 'Scan finished';
+                // Trigger REST refetch of all data
+                setTimeout(() => {
+                  api.getScan(activeScanId).then(updated => {
+                    if (updated) {
+                      setScans(prev => prev.map(item => item.id === updated.id ? updated : item));
+                    }
+                    fetchScansData();
+                  });
+                }, 1000);
+              }
+
+              if (eventName === 'scan.failed') {
+                status = 'failed';
+                currentPhase = 'Scan failed';
+                setTimeout(() => {
+                  api.getScan(activeScanId).then(updated => {
+                    if (updated) setScans(prev => prev.map(item => item.id === updated.id ? updated : item));
+                    fetchScansData();
+                  });
+                }, 1000);
+              }
+
+              if (eventName === 'scan.cancelled') {
+                status = 'cancelled';
+                currentPhase = 'Scan cancelled';
+                setTimeout(() => {
+                  api.getScan(activeScanId).then(updated => {
+                    if (updated) setScans(prev => prev.map(item => item.id === updated.id ? updated : item));
+                    fetchScansData();
+                  });
+                }, 1000);
+              }
+
+              return {
+                ...s,
+                logs,
+                progress,
+                status,
+                currentPhase,
+                findingsCount
+              };
+            })
+          );
+        } catch (err) {
+          console.error("Failed to parse WebSocket message:", err);
+        }
+      };
+
+      socket.onerror = () => {
+        startFallbackPoll();
+      };
+
+      socket.onclose = () => {
+        startFallbackPoll();
+        if (reconnectAttempts < maxReconnectAttempts) {
+          const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 10000);
+          reconnectAttempts++;
+          reconnectTimeout = setTimeout(connectWebSocket, delay);
+        }
+      };
+    };
+
+    connectWebSocket();
 
     return () => {
-      if (interval) clearInterval(interval);
+      stopFallbackPoll();
+      if (socket) {
+        socket.onopen = null;
+        socket.onmessage = null;
+        socket.onerror = null;
+        socket.onclose = null;
+        socket.close();
+      }
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
     };
   }, [viewMode, activeScanId, activeScan?.status]);
 

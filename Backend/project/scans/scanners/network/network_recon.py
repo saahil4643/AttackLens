@@ -2,15 +2,14 @@ import ipaddress
 from scans.scanners.base import BaseScanner
 from scans.scanners.placeholders.placeholder_scanner import ScopeException
 from scans.scanners.network.host_discovery import HostDiscovery
-from scans.scanners.network.nmap_runner import NmapRunner
-from scans.scanners.network.nmap_parser import NmapParser
+from scans.scanners.network.resolver import DNSResolver
+from scans.scanners.network.socket_scanner import SocketScanner, NETWORK_SCAN_START_PORT, NETWORK_SCAN_END_PORT, SOCKET_TIMEOUT, MAX_CONCURRENCY
+from scans.publisher import ScanEventPublisher
 
 class NetworkReconScanner(BaseScanner):
     # Backend-controlled scanner constants
-    NMAP_DEFAULT_PORTS = "1-1024"
-    NMAP_CONNECT_TIMEOUT = 5
-    NMAP_MAX_HOSTS = 256
-    NMAP_EXECUTION_TIMEOUT = 300 # 5 minutes execution timeout
+    MAX_HOSTS = 256
+    EXECUTION_TIMEOUT = 300 # 5 minutes execution timeout
 
     def __init__(self, context):
         super().__init__(context)
@@ -34,13 +33,10 @@ class NetworkReconScanner(BaseScanner):
             if not target_str:
                 continue
                 
-            # Normalize target representation (extract bare host/IP/domain from URL)
-            target_clean = target_str
-            if '://' in target_clean:
-                from urllib.parse import urlparse
-                parsed = urlparse(target_clean)
-                target_clean = parsed.netloc or parsed.path
-            target_clean = target_clean.rstrip('/')
+            # Normalize target representation using HostDiscovery helper
+            target_clean = HostDiscovery.normalize_target_input(target_str)
+            if not target_clean:
+                continue
             
             # If target has a slash, parse as CIDR subnet boundary
             if '/' in target_clean:
@@ -63,19 +59,16 @@ class NetworkReconScanner(BaseScanner):
             if not raw_target:
                 continue
             
-            # Normalize target representation (extract bare host/IP/domain from URL)
-            target_clean = raw_target
-            if '://' in target_clean:
-                from urllib.parse import urlparse
-                parsed = urlparse(target_clean)
-                target_clean = parsed.netloc or parsed.path
-            target_clean = target_clean.rstrip('/')
+            # Normalize target representation using HostDiscovery helper
+            target_clean = HostDiscovery.normalize_target_input(raw_target)
+            if not target_clean:
+                continue
 
             resolved_hosts = HostDiscovery.resolve_target(target_clean)
-            if len(resolved_hosts) > self.NMAP_MAX_HOSTS:
+            if len(resolved_hosts) > self.MAX_HOSTS:
                 raise ScopeException(
                     f"Resolved target '{raw_target}' yields {len(resolved_hosts)} hosts, "
-                    f"exceeding authorized cap of {self.NMAP_MAX_HOSTS}."
+                    f"exceeding authorized cap of {self.MAX_HOSTS}."
                 )
 
             for host in resolved_hosts:
@@ -84,11 +77,12 @@ class NetworkReconScanner(BaseScanner):
                     ipaddress.ip_address(host)
                     self.targets_to_scan.append(host)
                 except ValueError:
-                    # Resolve domain name
-                    ip = HostDiscovery.resolve_dns(host)
-                    if ip:
-                        self.domain_to_ip_map[host] = ip
-                        self.targets_to_scan.append(ip)
+                    # Resolve domain name using native DNSResolver
+                    ips = DNSResolver.resolve(host)
+                    if ips:
+                        for ip in ips:
+                            self.domain_to_ip_map[host] = ip
+                            self.targets_to_scan.append(ip)
                     else:
                         self.targets_to_scan.append(host)
 
@@ -120,95 +114,191 @@ class NetworkReconScanner(BaseScanner):
                 raise ScopeException(f"Target host '{target}' lies outside authorized assessment scope.")
 
     def prepare(self):
-        # Verify Nmap exists before scanning starts
-        if not NmapRunner.is_nmap_installed():
-            raise RuntimeError("Nmap is not installed or is unavailable on the AttackLens worker.")
+        pass
 
     def run(self, progress_callback=None):
+        assessment_id = self.context.assessment.id
+        job_id = self.scan_job.id
+
+        # Publish scan.started
+        ScanEventPublisher.publish(
+            assessment_id,
+            "scan.started",
+            {"message": "Starting AttackLens network scan..."},
+            job_id
+        )
+
         if not self.targets_to_scan:
+            ScanEventPublisher.publish(
+                assessment_id,
+                "scan.completed",
+                {"message": "No targets to scan.", "hosts_scanned": 0, "ports_checked": 0, "open_ports": 0},
+                job_id
+            )
             return {
                 "scanner": "network_recon",
                 "scanner_version": "2.0.0",
                 "status": "completed",
-                "scan_type": "tcp_port_scan",
+                "scan_type": "tcp_socket_port_scan",
                 "hosts_scanned": 0,
                 "ports_checked": 0,
                 "open_ports": 0,
+                "closed_ports": 0,
+                "timeouts": 0,
                 "assets": [],
                 "findings": []
             }
 
-        if progress_callback:
-            progress_callback(10, f"Initializing Nmap scanner targeting {len(self.targets_to_scan)} hosts...")
-
-        runner = NmapRunner(timeout=self.NMAP_EXECUTION_TIMEOUT)
-
-        def cancel_check():
-            if self.is_cancelled:
-                return True
-            try:
-                self.scan_job.refresh_from_db()
-                if self.scan_job.status == 'CANCELLED':
-                    self.is_cancelled = True
-                    return True
-            except Exception:
-                pass
-            return False
-
-        if progress_callback:
-            progress_callback(20, "Running TCP port scan using Nmap...")
-
-        # Run Nmap on targets list
-        res = runner.run_scan(
-            target=self.targets_to_scan,
-            port_range=self.NMAP_DEFAULT_PORTS,
-            cancel_check=cancel_check
+        # DNS resolution event
+        ScanEventPublisher.publish(
+            assessment_id,
+            "scan.dns_resolution",
+            {"message": "DNS resolution completed for targets."},
+            job_id
+        )
+        ScanEventPublisher.publish(
+            assessment_id,
+            "scan.log",
+            {"message": f"Resolved target scopes. Target IPs to scan: {', '.join(self.targets_to_scan)}"},
+            job_id
         )
 
-        if res["status"] == "cancelled" or self.is_cancelled:
-            return {
-                "scanner": "network_recon",
-                "scanner_version": "2.0.0",
-                "status": "cancelled",
-                "scan_type": "tcp_port_scan",
-                "hosts_scanned": 0,
-                "ports_checked": 0,
-                "open_ports": 0,
-                "assets": [],
-                "findings": []
-            }
+        # Host discovery events
+        for domain, ip in self.domain_to_ip_map.items():
+            ScanEventPublisher.publish(
+                assessment_id,
+                "scan.host_discovered",
+                {"hostname": domain, "resolved_ip": ip},
+                job_id
+            )
+            ScanEventPublisher.publish(
+                assessment_id,
+                "scan.log",
+                {"message": f"Discovered mapped target host: {domain} -> {ip}"},
+                job_id
+            )
 
-        if res["status"] == "timeout":
-            raise RuntimeError(res["error_message"])
-
-        if res["status"] == "failed":
-            raise RuntimeError(res["error_message"])
-
-        if progress_callback:
-            progress_callback(80, "Parsing XML scan output...")
-
-        # Parse XML outputs
-        parsed_hosts = NmapParser.parse_xml(res["xml_output"])
+        # Instantiate socket scanner
+        scanner = SocketScanner(
+            start_port=NETWORK_SCAN_START_PORT,
+            end_port=NETWORK_SCAN_END_PORT,
+            timeout=SOCKET_TIMEOUT,
+            concurrency=MAX_CONCURRENCY
+        )
+        self.scanner = scanner
 
         assets = []
         findings = []
         open_ports_count = 0
+        total_closed_ports = 0
+        total_timeouts = 0
+        total_ports_checked = 0
 
-        # Iterate parsed host outputs and build standard AttackLens outputs
-        for host_info in parsed_hosts:
-            ip = host_info["ip"]
-            if not ip:
-                continue
+        # Define check callbacks
+        def on_port_check(ip, port_res):
+            port = port_res["port"]
+            state = port_res["state"]
+            
+            # Send immediately for open ports
+            if state == "OPEN":
+                service = SocketScanner.PORT_SERVICE_MAP.get(port, "unknown")
+                ScanEventPublisher.publish(
+                    assessment_id,
+                    "scan.port_open",
+                    {
+                        "host": ip,
+                        "port": port,
+                        "state": state,
+                        "service": service
+                    },
+                    job_id
+                )
+                ScanEventPublisher.publish(
+                    assessment_id,
+                    "scan.log",
+                    {"message": f"[+] Port {port} OPEN ({service}) discovered on {ip}."},
+                    job_id
+                )
+            elif scanner.ports_checked % 50 == 0:
+                # Throttle closed/timeout port events
+                ScanEventPublisher.publish(
+                    assessment_id,
+                    "scan.port_check",
+                    {
+                        "host": ip,
+                        "port": port,
+                        "state": state
+                    },
+                    job_id
+                )
 
-            # Resolve domain mapping
+        def on_progress(checked, total):
+            # Map port checking progress to overall percentage range 20% - 95%
+            progress_pct = 20 + int((checked / total) * 75)
+            if progress_callback:
+                progress_callback(progress_pct, f"Scanning TCP ports: {checked}/{total} checked...")
+            
+            # Emit progress update log every 100 ports or at completion
+            if checked % 100 == 0 or checked == total:
+                ScanEventPublisher.publish(
+                    assessment_id,
+                    "scan.log",
+                    {"message": f"Progress: {checked}/{total} ports checked ({int(checked / total * 100)}%)..."},
+                    job_id
+                )
+
+            ScanEventPublisher.publish(
+                assessment_id,
+                "scan.progress",
+                {
+                    "progress": progress_pct,
+                    "message": "Scanning TCP ports...",
+                    "ports_checked": checked,
+                    "ports_total": total,
+                    "open_ports": scanner.open_ports,
+                    "closed_ports": scanner.closed_ports,
+                    "timeouts": scanner.timeouts
+                },
+                job_id
+            )
+
+        # Scan each scoped target IP
+        for ip in self.targets_to_scan:
+            # Check for cancellation before/during scan
+            if self.is_cancelled or scanner.is_cancelled:
+                break
+                
+            ScanEventPublisher.publish(
+                assessment_id,
+                "scan.log",
+                {"message": f"Starting TCP socket connect scan on host {ip} (ports {NETWORK_SCAN_START_PORT}-{NETWORK_SCAN_END_PORT})..."},
+                job_id
+            )
+
+            results = scanner.scan_host(
+                ip,
+                progress_callback=on_progress,
+                port_callback=on_port_check
+            )
+
+            total_ports_checked += scanner.ports_checked
+            open_ports_count += scanner.open_ports
+            total_closed_ports += scanner.closed_ports
+            total_timeouts += scanner.timeouts
+
+            ScanEventPublisher.publish(
+                assessment_id,
+                "scan.log",
+                {"message": f"Host {ip} scan completed. Checked {scanner.ports_checked} ports. Open: {scanner.open_ports}, Closed/Filtered: {scanner.closed_ports + scanner.timeouts}"},
+                job_id
+            )
+
+            # Resolve domain name mapping
             domain_name = None
-            if host_info["hostnames"]:
-                domain_name = host_info["hostnames"][0]
-            else:
-                for d, resolved_ip in self.domain_to_ip_map.items():
-                    if resolved_ip == ip:
-                        domain_name = d
-                        break
+            for d, resolved_ip in self.domain_to_ip_map.items():
+                if resolved_ip == ip:
+                    domain_name = d
+                    break
 
             # 1. Register Domain Asset
             if domain_name:
@@ -226,18 +316,11 @@ class NetworkReconScanner(BaseScanner):
             })
 
             # 3. Process open ports
-            for port_info in host_info["ports"]:
-                if port_info["state"].upper() == "OPEN":
-                    port_num = port_info["port"]
-                    open_ports_count += 1
-
-                    srv = {
-                        "service": port_info["service"],
-                        "banner": "",
-                        "version": "",
-                        "version_confidence": "LOW"
-                    }
-
+            for port_res in results:
+                if port_res["state"] == "OPEN":
+                    port_num = port_res["port"]
+                    service = SocketScanner.PORT_SERVICE_MAP.get(port_num, "unknown")
+                    
                     assets.append({
                         "asset_type": "PORT",
                         "value": f"{ip}:{port_num}",
@@ -245,7 +328,7 @@ class NetworkReconScanner(BaseScanner):
                             "host": ip,
                             "port": port_num,
                             "state": "OPEN",
-                            "service": port_info["service"],
+                            "service": service,
                             "banner": "",
                             "version": "",
                             "version_confidence": "LOW"
@@ -253,30 +336,69 @@ class NetworkReconScanner(BaseScanner):
                     })
 
                     # Findings evaluation mapping
-                    finding_data = self._evaluate_exposed_port_findings(ip, port_num, srv)
+                    srv_obj = {"service": service}
+                    finding_data = self._evaluate_exposed_port_findings(ip, port_num, srv_obj)
                     if finding_data:
                         findings.append(finding_data)
 
+        # Handle Cancellation
+        if self.is_cancelled or scanner.is_cancelled:
+            ScanEventPublisher.publish(
+                assessment_id,
+                "scan.cancelled",
+                {"message": "Scan execution cancelled by client."},
+                job_id
+            )
+            return {
+                "scanner": "network_recon",
+                "scanner_version": "2.0.0",
+                "status": "cancelled",
+                "scan_type": "tcp_socket_port_scan",
+                "hosts_scanned": len(self.targets_to_scan),
+                "ports_checked": total_ports_checked,
+                "open_ports": open_ports_count,
+                "closed_ports": total_closed_ports,
+                "timeouts": total_timeouts,
+                "assets": [],
+                "findings": []
+            }
+
+        # Completed successfully
+        ScanEventPublisher.publish(
+            assessment_id,
+            "scan.completed",
+            {
+                "message": "TCP port scan execution completed successfully.",
+                "hosts_scanned": len(self.targets_to_scan),
+                "ports_checked": total_ports_checked,
+                "open_ports": open_ports_count,
+                "closed_ports": total_closed_ports,
+                "timeouts": total_timeouts
+            },
+            job_id
+        )
+
         if progress_callback:
             progress_callback(100, "Scan execution completed.")
-
-        # Estimate ports checked as default port size * hosts scanned
-        ports_checked = 1024 * len(self.targets_to_scan)
 
         return {
             "scanner": "network_recon",
             "scanner_version": "2.0.0",
             "status": "completed",
-            "scan_type": "tcp_port_scan",
+            "scan_type": "tcp_socket_port_scan",
             "hosts_scanned": len(self.targets_to_scan),
-            "ports_checked": ports_checked,
+            "ports_checked": total_ports_checked,
             "open_ports": open_ports_count,
+            "closed_ports": total_closed_ports,
+            "timeouts": total_timeouts,
             "assets": assets,
             "findings": findings
         }
 
     def cancel(self):
         self.is_cancelled = True
+        if hasattr(self, 'scanner') and self.scanner:
+            self.scanner.cancel()
 
     def cleanup(self):
         pass

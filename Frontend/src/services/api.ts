@@ -126,11 +126,17 @@ function mapAssets(rawAssets: any[]): Asset[] {
 }
 
 function mapScan(a: any): Scan {
+  const assessmentObj = a.assessment || a;
+  const projectObj = a.project || {};
+  const projectId = typeof projectObj === 'object' && projectObj.id ? projectObj.id : (a.project || '');
+  const name = assessmentObj.name || a.name || 'Assessment Scan';
+  const id = assessmentObj.id || a.id;
   const fc = a.finding_count_detail || {};
+  
   return {
-    id: String(a.id),
-    projectId: String(a.project),
-    name: a.name,
+    id: String(id),
+    projectId: String(projectId),
+    name: name,
     status: (a.status || 'queued').toLowerCase() as any, // queued, running, completed, failed
     type: 'network', // Default type mapping
     target: a.live_url || 'Target System',
