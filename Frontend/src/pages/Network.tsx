@@ -5,6 +5,7 @@ import { DataTable } from '../components/DataTable';
 import { StatusBadge } from '../components/StatusBadge';
 import { SeverityBadge } from '../components/SeverityBadge';
 import { LoadingState } from '../components/LoadingState';
+import { PortScannerModal } from '../components/PortScannerModal';
 import {
   Network as NetIcon,
   Server,
@@ -14,7 +15,8 @@ import {
   Minimize2,
   Globe,
   Radio,
-  Cpu
+  Cpu,
+  Zap,
 } from 'lucide-react';
 
 interface NetworkProps {
@@ -23,6 +25,9 @@ interface NetworkProps {
 
 export const Network: React.FC<NetworkProps> = ({ selectedProjectId }) => {
   const [loading, setLoading] = useState(true);
+  const [isScannerModalOpen, setIsScannerModalOpen] = useState(false);
+  const [scannerInitialTarget, setScannerInitialTarget] = useState('');
+
   const [assets, setAssets] = useState<Asset[]>([]);
   const [findings, setFindings] = useState<Finding[]>([]);
   const [activeTab, setActiveTab] = useState<'topology' | 'hosts' | 'services'>('topology');
@@ -120,6 +125,16 @@ export const Network: React.FC<NetworkProps> = ({ selectedProjectId }) => {
           <h2 className="text-xl font-bold uppercase tracking-wider text-zinc-150">Network Topology & Service Audit</h2>
           <p className="text-xs text-zinc-500 mt-1">Interactive network layouts, open ports map, and version logs.</p>
         </div>
+        <button
+          onClick={() => {
+            setScannerInitialTarget(selectedNode?.ipAddress || selectedNode?.name || '');
+            setIsScannerModalOpen(true);
+          }}
+          className="flex items-center gap-2 px-3 py-1.5 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30 rounded text-xs font-semibold uppercase tracking-wider transition-all cursor-pointer"
+        >
+          <Zap className="w-3.5 h-3.5" />
+          Live Port Scanner
+        </button>
       </div>
 
       {/* Tabs */}
@@ -365,6 +380,14 @@ export const Network: React.FC<NetworkProps> = ({ selectedProjectId }) => {
           to { opacity: 1; transform: translateY(0); }
         }
       `}</style>
+
+      {/* Live Port Scanner Modal */}
+      <PortScannerModal
+        isOpen={isScannerModalOpen}
+        onClose={() => setIsScannerModalOpen(false)}
+        initialTarget={scannerInitialTarget}
+      />
     </div>
   );
 };
+

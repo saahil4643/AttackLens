@@ -1,7 +1,15 @@
-import { Project, Asset, Scan, Finding, Report, HttpInteraction, AuditLog, FindingStatus, SeverityCount } from './types';
+import {
+  Project, Asset, Scan, Finding, Report, HttpInteraction, AuditLog, FindingStatus, SeverityCount,
+  PortScanResult, PortScanStreamEvent, HttpDetectionResult, HttpDetectionStreamEvent,
+  EndpointDiscoveryResult, EndpointDiscoveryStreamEvent,
+  TechnologyFingerprintResult, TechnologyFingerprintStreamEvent
+} from './types';
 import { mockHttpHistory, mockAuditLogs } from './mockData';
 
 const BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api').replace(/\/$/, '');
+const BACKEND_ROOT = BASE_URL.replace(/\/api\/?$/, '');
+
+
 
 // Bounded generic helper to handle standard fetch operations and serialize JSON
 async function request(path: string, options: RequestInit = {}) {
@@ -590,5 +598,321 @@ export const api = {
   // Audit Logs
   getAuditLogs: async (): Promise<AuditLog[]> => {
     return [...mockAuditLogs];
+  },
+
+  // Port Scanner API (Instant)
+  checkPorts: async (target: string, mode: 'quick' | 'all' | 'custom' = 'quick', ports?: string, timeout?: number): Promise<PortScanResult> => {
+    const params = new URLSearchParams();
+    params.set('target', target);
+    params.set('mode', mode);
+    if (ports) params.set('ports', ports);
+    if (timeout) params.set('timeout', String(timeout));
+
+    const directUrl = `${BACKEND_ROOT}/check-ports/?${params.toString()}`;
+    const resp = await fetch(directUrl);
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ error: resp.statusText }));
+      throw new Error(err.error || err.detail || 'Port scan failed');
+    }
+    return await resp.json();
+  },
+
+  // Port Scanner API (Live Streaming via Server-Sent Events)
+  streamPorts: (
+    target: string,
+    mode: 'quick' | 'all' | 'custom' = 'quick',
+    onEvent: (event: PortScanStreamEvent) => void,
+    onError: (err: Error) => void,
+    ports?: string,
+    timeout?: number
+  ): (() => void) => {
+    const params = new URLSearchParams();
+    params.set('target', target);
+    params.set('mode', mode);
+    if (ports) params.set('ports', ports);
+    if (timeout) params.set('timeout', String(timeout));
+
+    const streamUrl = `${BACKEND_ROOT}/stream-ports/?${params.toString()}`;
+    const controller = new AbortController();
+
+    fetch(streamUrl, { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({ error: response.statusText }));
+          throw new Error(errData.error || errData.detail || 'Stream connection failed');
+        }
+
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error('ReadableStream not supported');
+
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith('data:')) {
+              const jsonStr = trimmed.slice(5).trim();
+              if (jsonStr) {
+                try {
+                  const eventData = JSON.parse(jsonStr) as PortScanStreamEvent;
+                  onEvent(eventData);
+                } catch (e) {
+                  console.error('Error parsing SSE event chunk:', e, jsonStr);
+                }
+              }
+            }
+          }
+        }
+      })
+      .catch((err) => {
+        if (err.name !== 'AbortError') {
+          onError(err);
+        }
+      });
+
+    // Return abort/cancel handler
+    return () => {
+      controller.abort();
+    };
+  },
+
+  // HTTP/HTTPS Web Inspector API (Instant)
+  detectHttpHttps: async (target: string): Promise<HttpDetectionResult> => {
+    const params = new URLSearchParams();
+    params.set('target', target);
+
+    const directUrl = `${BACKEND_ROOT}/http-detection/?${params.toString()}`;
+    const resp = await fetch(directUrl);
+    const data = await resp.json().catch(() => ({ error: resp.statusText }));
+    if (!resp.ok && !data.reachable && !data.status_code) {
+      throw new Error(data.error || 'HTTP detection failed');
+    }
+    return data;
+  },
+
+  // HTTP/HTTPS Web Inspector API (Live Streaming SSE)
+  streamHttpDetection: (
+    target: string,
+    onEvent: (event: HttpDetectionStreamEvent) => void,
+    onError: (err: Error) => void
+  ): (() => void) => {
+    const params = new URLSearchParams();
+    params.set('target', target);
+
+    const streamUrl = `${BACKEND_ROOT}/stream-http-detection/?${params.toString()}`;
+    const controller = new AbortController();
+
+    fetch(streamUrl, { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({ error: response.statusText }));
+          throw new Error(errData.error || errData.detail || 'Stream connection failed');
+        }
+
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error('ReadableStream not supported');
+
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith('data:')) {
+              const jsonStr = trimmed.slice(5).trim();
+              if (jsonStr) {
+                try {
+                  const eventData = JSON.parse(jsonStr) as HttpDetectionStreamEvent;
+                  onEvent(eventData);
+                } catch (e) {
+                  console.error('Error parsing HTTP SSE chunk:', e, jsonStr);
+                }
+              }
+            }
+          }
+        }
+      })
+      .catch((err) => {
+        if (err.name !== 'AbortError') {
+          onError(err);
+        }
+      });
+
+    return () => {
+      controller.abort();
+    };
+  },
+
+  // Endpoint & Web Surface Discovery API (Instant)
+  discoverEndpoints: async (target: string, maxPages: number = 20): Promise<EndpointDiscoveryResult> => {
+    const params = new URLSearchParams();
+    params.set('target', target);
+    params.set('max_pages', String(maxPages));
+
+    const directUrl = `${BACKEND_ROOT}/discover-endpoints/?${params.toString()}`;
+    const resp = await fetch(directUrl);
+    const data = await resp.json().catch(() => ({ error: resp.statusText }));
+    if (!resp.ok) {
+      throw new Error(data.error || 'Endpoint discovery failed');
+    }
+    return data;
+  },
+
+  // Endpoint & Web Surface Discovery API (Live Streaming SSE)
+  streamEndpointDiscovery: (
+    target: string,
+    onEvent: (event: EndpointDiscoveryStreamEvent) => void,
+    onError: (err: Error) => void,
+    maxPages: number = 20
+  ): (() => void) => {
+    const params = new URLSearchParams();
+    params.set('target', target);
+    params.set('max_pages', String(maxPages));
+
+    const streamUrl = `${BACKEND_ROOT}/stream-endpoint-discovery/?${params.toString()}`;
+    const controller = new AbortController();
+
+    fetch(streamUrl, { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({ error: response.statusText }));
+          throw new Error(errData.error || errData.detail || 'Stream connection failed');
+        }
+
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error('ReadableStream not supported');
+
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith('data:')) {
+              const jsonStr = trimmed.slice(5).trim();
+              if (jsonStr) {
+                try {
+                  const eventData = JSON.parse(jsonStr) as EndpointDiscoveryStreamEvent;
+                  onEvent(eventData);
+                } catch (e) {
+                  console.error('Error parsing Discovery SSE chunk:', e, jsonStr);
+                }
+              }
+            }
+          }
+        }
+      })
+      .catch((err) => {
+        if (err.name !== 'AbortError') {
+          onError(err);
+        }
+      });
+
+    return () => {
+      controller.abort();
+    };
+  },
+
+  // Technology Fingerprinting API (Instant)
+  fingerprintTechnology: async (target: string, maxPages: number = 5): Promise<TechnologyFingerprintResult> => {
+    const params = new URLSearchParams();
+    params.set('target', target);
+    params.set('max_pages', String(maxPages));
+
+    const directUrl = `${BACKEND_ROOT}/api/technology-fingerprint/?${params.toString()}`;
+    const resp = await fetch(directUrl);
+    const data = await resp.json().catch(() => ({ error: resp.statusText }));
+    if (!resp.ok) {
+      throw new Error(data.error || 'Technology fingerprinting failed');
+    }
+    return data;
+  },
+
+  // Technology Fingerprinting API (Live Streaming SSE)
+  streamTechnologyFingerprint: (
+    target: string,
+    onEvent: (event: TechnologyFingerprintStreamEvent) => void,
+    onError: (err: Error) => void,
+    maxPages: number = 5
+  ): (() => void) => {
+    const params = new URLSearchParams();
+    params.set('target', target);
+    params.set('max_pages', String(maxPages));
+
+    const streamUrl = `${BACKEND_ROOT}/stream-technology-fingerprint/?${params.toString()}`;
+    const controller = new AbortController();
+
+    fetch(streamUrl, { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({ error: response.statusText }));
+          throw new Error(errData.error || errData.detail || 'Stream connection failed');
+        }
+
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error('ReadableStream not supported');
+
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith('data:')) {
+              const jsonStr = trimmed.slice(5).trim();
+              if (jsonStr) {
+                try {
+                  const eventData = JSON.parse(jsonStr) as TechnologyFingerprintStreamEvent;
+                  onEvent(eventData);
+                } catch (e) {
+                  console.error('Error parsing Technology Fingerprint SSE chunk:', e, jsonStr);
+                }
+              }
+            }
+          }
+        }
+      })
+      .catch((err) => {
+        if (err.name !== 'AbortError') {
+          onError(err);
+        }
+      });
+
+    return () => {
+      controller.abort();
+    };
   }
 };
+
+
+
+

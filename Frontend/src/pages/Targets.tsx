@@ -10,7 +10,8 @@ import { SeverityBadge } from '../components/SeverityBadge';
 import { LoadingState } from '../components/LoadingState';
 import { EmptyState } from '../components/EmptyState';
 import { Modal } from '../components/Modal';
-import { Check } from 'lucide-react';
+import { PortScannerModal } from '../components/PortScannerModal';
+import { Check, Zap, Activity } from 'lucide-react';
 import {
   Globe,
   Network as NetworkIcon,
@@ -52,6 +53,11 @@ export const Targets: React.FC<TargetsProps> = ({
   const [targetErr, setTargetErr] = useState('');
   const [addingTarget, setAddingTarget] = useState(false);
   const [selectedAddProject, setSelectedAddProject] = useState(selectedProjectId === 'all' ? '' : selectedProjectId);
+
+  // Live Port Scanner states
+  const [isScannerModalOpen, setIsScannerModalOpen] = useState(false);
+  const [scannerInitialTarget, setScannerInitialTarget] = useState('');
+
 
   useEffect(() => {
     setSelectedAddProject(selectedProjectId === 'all' ? '' : selectedProjectId);
@@ -105,6 +111,18 @@ export const Targets: React.FC<TargetsProps> = ({
       setAddingTarget(false);
     }
   };
+
+  const handleSaveScannedAsset = async (target: string, ports: number[], services: string[]) => {
+    const projId = selectedProjectId !== 'all' ? selectedProjectId : (projects[0]?.id || '');
+    if (!projId) return;
+    try {
+      await api.createTarget(projId, target.includes('.') && !target.match(/^\d+\.\d+\.\d+\.\d+$/) ? 'DOMAIN' : 'IP', target, 'DEVELOPMENT');
+      await fetchData();
+    } catch (e) {
+      console.error('Failed to save scanned asset:', e);
+    }
+  };
+
 
   const projectAssets = useMemo(() =>
     selectedProjectId === 'all' ? assets : assets.filter(a => a.projectId === selectedProjectId),
@@ -209,9 +227,21 @@ export const Targets: React.FC<TargetsProps> = ({
             Domains, IP addresses, hosts and API endpoints in scope.
           </p>
         </div>
-        <button className="btn btn-primary" onClick={() => setIsAddModalOpen(true)}>
-          <Plus style={{ width: 14, height: 14 }} /> Add target
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            className="btn btn-secondary"
+            onClick={() => {
+              setScannerInitialTarget('');
+              setIsScannerModalOpen(true);
+            }}
+            style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+          >
+            <Zap style={{ width: 14, height: 14, color: 'var(--accent-fg)' }} /> Live Port Scanner
+          </button>
+          <button className="btn btn-primary" onClick={() => setIsAddModalOpen(true)}>
+            <Plus style={{ width: 14, height: 14 }} /> Add target
+          </button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -313,6 +343,16 @@ export const Targets: React.FC<TargetsProps> = ({
                   ))}
                 </div>
               ) : <p style={{ fontSize: 13, color: 'var(--fg-subtle)' }}>No open ports detected.</p>}
+              <button
+                onClick={() => {
+                  setScannerInitialTarget(activeAsset.ipAddress || activeAsset.name);
+                  setIsScannerModalOpen(true);
+                }}
+                className="btn btn-secondary"
+                style={{ width: '100%', marginTop: 10, fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+              >
+                <Zap style={{ width: 13, height: 13, color: 'var(--accent-fg)' }} /> Audit Live Ports on {activeAsset.name}
+              </button>
             </div>
 
             {/* Technologies */}
@@ -464,6 +504,15 @@ export const Targets: React.FC<TargetsProps> = ({
           </div>
         </form>
       </Modal>
+
+      {/* Live Port Scanner Modal */}
+      <PortScannerModal
+        isOpen={isScannerModalOpen}
+        onClose={() => setIsScannerModalOpen(false)}
+        initialTarget={scannerInitialTarget}
+        onAddAsAsset={handleSaveScannedAsset}
+      />
     </div>
   );
 };
+
