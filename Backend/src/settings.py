@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     'analysis',
     'tls_analysis',
     'api_analysis',
+    'attack_surface',
 ]
 
 

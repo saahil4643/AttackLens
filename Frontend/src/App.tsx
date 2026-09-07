@@ -7,6 +7,7 @@ import { TechnologyFingerprintingDashboard } from './pages/TechnologyFingerprint
 import { SecurityConfigurationDashboard } from './pages/SecurityConfigurationDashboard';
 import { TlsAnalysisDashboard } from './pages/TlsAnalysisDashboard';
 import { ApiAnalysisDashboard } from './pages/ApiAnalysisDashboard';
+import { WebApplicationAnalysisDashboard } from './pages/WebApplicationAnalysisDashboard';
 
 function App() {
   const [activePage, setActivePage] = useState<string>('ports');
@@ -20,6 +21,7 @@ function App() {
       {activePage === 'security-config' && <SecurityConfigurationDashboard />}
       {activePage === 'tls' && <TlsAnalysisDashboard />}
       {activePage === 'api-analysis' && <ApiAnalysisDashboard />}
+      {activePage === 'attack-surface' && <WebApplicationAnalysisDashboard />}
     </MainLayout>
   );
 }

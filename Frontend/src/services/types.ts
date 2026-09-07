@@ -671,5 +671,222 @@ export type ApiAnalysisStreamEvent =
   | { event: 'complete'; message: string; target: string; data: ApiInventoryResult; elapsed_seconds?: number }
   | { event: 'error'; message: string; target: string; error?: string };
 
+// ─── Overall Web Application Attack-Surface Analysis Types ───────────────────
+
+export interface AssetRecord {
+  host: string;
+  ip?: string | null;
+  port?: number | null;
+  protocol: string;
+  service: string;
+  scope: 'in_scope' | 'out_of_scope' | 'external_dependency' | 'unknown';
+  source: string;
+}
+
+export interface WebServiceRecord {
+  host: string;
+  port: number;
+  protocol: string;
+  status_code?: number | null;
+  server?: string | null;
+  final_url?: string | null;
+  page_title?: string | null;
+  technologies: string[];
+}
+
+export interface EndpointSurfaceRecord {
+  path: string;
+  url: string;
+  method: string;
+  content_type?: string | null;
+  source: string;
+  status_code?: number | null;
+  category: 'page' | 'api' | 'authentication' | 'administrative' | 'static' | 'upload' | 'documentation' | 'health' | 'unknown' | string;
+  confidence: number;
+  authentication?: Record<string, any> | null;
+}
+
+export interface ApiSurfaceRecord {
+  endpoint: string;
+  path: string;
+  method: string;
+  type: 'REST' | 'GraphQL' | 'RPC' | 'unknown' | string;
+  version?: string | null;
+  parameters: Array<{ name: string; location: string; type?: string; required?: boolean }>;
+  authentication?: Record<string, any> | null;
+  status_code?: number | null;
+  content_type?: string | null;
+  documentation_source?: string | null;
+  rate_limit?: Record<string, any> | null;
+  confidence: number;
+}
+
+export interface AuthSurfaceRecord {
+  endpoint: string;
+  type: 'login' | 'registration' | 'password_reset' | 'oauth' | 'token' | 'session' | 'sso' | '2fa' | string;
+  method: string;
+  source: string;
+  confidence: number;
+  evidence: string[];
+}
+
+export interface SessionSurfaceRecord {
+  cookie_name: string;
+  is_secure: boolean;
+  is_httponly: boolean;
+  same_site?: string | null;
+  domain?: string | null;
+  path?: string | null;
+  likely_session_indicator: boolean;
+}
+
+export interface FormSurfaceRecord {
+  action: string;
+  method: string;
+  input_names: string[];
+  input_types: string[];
+  fields_count: number;
+  classification: 'login' | 'registration' | 'search' | 'contact' | 'upload' | 'password' | 'feedback' | 'unknown' | string;
+  confidence: number;
+}
+
+export interface FileUploadSurfaceRecord {
+  endpoint: string;
+  method: string;
+  type: string;
+  source: string;
+  confidence: number;
+  evidence: string;
+}
+
+export interface AdminSurfaceRecord {
+  endpoint: string;
+  classification: string;
+  confidence: number;
+  evidence: string;
+}
+
+export interface DocSurfaceRecord {
+  documentation_url: string;
+  spec_format: string;
+  api_version?: string | null;
+  endpoint_count: number;
+  source: string;
+}
+
+export interface OperationalSurfaceRecord {
+  endpoint: string;
+  type: string;
+  method: string;
+  status_code?: number | null;
+  confidence: number;
+}
+
+export interface WebSocketSurfaceRecord {
+  url: string;
+  protocol: 'ws' | 'wss' | string;
+  source: string;
+  confidence: number;
+}
+
+export interface ExternalDependencyRecord {
+  host: string;
+  category: 'cdn' | 'analytics' | 'payment' | 'identity' | 'storage' | 'font' | 'api' | 'unknown' | string;
+  source: string;
+  referenced_urls: string[];
+}
+
+export interface ParameterSurfaceRecord {
+  name: string;
+  location: 'query' | 'path' | 'form' | 'header' | 'body' | string;
+  endpoints: string[];
+  parameter_type: string;
+  source: string;
+}
+
+export interface FunctionalityCategoryRecord {
+  category: string;
+  confidence: number;
+  endpoints: string[];
+  evidence: string[];
+}
+
+export interface TestCandidateRecord {
+  area: 'authentication' | 'authorization' | 'api' | 'input_validation' | 'file_upload' | 'session_management' | 'business_logic' | 'administration' | 'websocket' | 'configuration' | 'information_disclosure' | string;
+  endpoint: string;
+  method: string;
+  reason: string;
+  priority: 'high' | 'medium' | 'low';
+}
+
+export interface AttackSurfaceSummary {
+  assets: number;
+  web_services: number;
+  endpoints: number;
+  api_endpoints: number;
+  authentication_surfaces: number;
+  forms: number;
+  file_uploads: number;
+  administrative_surfaces: number;
+  documentation: number;
+  websockets: number;
+  operational_endpoints: number;
+  external_dependencies: number;
+  parameters: number;
+  test_candidates: number;
+}
+
+export interface AttackSurfaceResult {
+  success: boolean;
+  target: string;
+  cleaned_target: string;
+  scan_status: 'completed' | 'partial' | 'failed';
+  elapsed_seconds: number;
+  summary: AttackSurfaceSummary;
+  assets: AssetRecord[];
+  web_services: WebServiceRecord[];
+  endpoints: EndpointSurfaceRecord[];
+  apis: ApiSurfaceRecord[];
+  authentication: AuthSurfaceRecord[];
+  session_cookies: SessionSurfaceRecord[];
+  forms: FormSurfaceRecord[];
+  file_uploads: FileUploadSurfaceRecord[];
+  administrative_surfaces: AdminSurfaceRecord[];
+  documentation: DocSurfaceRecord[];
+  websockets: WebSocketSurfaceRecord[];
+  operational_endpoints: OperationalSurfaceRecord[];
+  external_dependencies: ExternalDependencyRecord[];
+  parameters: ParameterSurfaceRecord[];
+  technologies: string[];
+  functionality_map: FunctionalityCategoryRecord[];
+  observations: Array<{ type: string; title: string; description: string; severity: 'info' | 'low' | 'medium' | 'high' }>;
+  test_candidates: TestCandidateRecord[];
+  security_configuration?: {
+    score?: number;
+    findings_count?: number;
+  };
+  tls?: {
+    supported_protocols?: string[];
+    certificate_valid?: boolean;
+  };
+  errors?: string[];
+  error?: string;
+}
+
+export type AttackSurfaceStreamEvent =
+  | { event: 'init'; target: string; message: string; elapsed_seconds?: number; data?: any }
+  | { event: 'target_init'; message: string; target: string; elapsed_seconds?: number }
+  | { event: 'port_scan'; message: string; target: string; elapsed_seconds?: number }
+  | { event: 'http_detection'; message: string; target: string; elapsed_seconds?: number }
+  | { event: 'technology_fingerprint'; message: string; target: string; elapsed_seconds?: number }
+  | { event: 'endpoint_discovery'; message: string; target: string; elapsed_seconds?: number }
+  | { event: 'security_config'; message: string; target: string; elapsed_seconds?: number }
+  | { event: 'tls_analysis'; message: string; target: string; elapsed_seconds?: number }
+  | { event: 'api_analysis'; message: string; target: string; elapsed_seconds?: number }
+  | { event: 'attack_surface_correlation'; message: string; target: string; elapsed_seconds?: number }
+  | { event: 'complete'; message: string; target: string; data: AttackSurfaceResult; elapsed_seconds?: number }
+  | { event: 'error'; message: string; target: string; error?: string };
+
+
 
 

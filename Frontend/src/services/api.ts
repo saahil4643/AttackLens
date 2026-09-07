@@ -5,7 +5,8 @@ import {
   TechnologyFingerprintResult, TechnologyFingerprintStreamEvent,
   SecurityConfigurationResult, SecurityConfigStreamEvent,
   TlsAnalysisResult, TlsAnalysisStreamEvent,
-  ApiInventoryResult, ApiAnalysisStreamEvent
+  ApiInventoryResult, ApiAnalysisStreamEvent,
+  AttackSurfaceResult, AttackSurfaceStreamEvent
 } from './types';
 import { mockHttpHistory, mockAuditLogs } from './mockData';
 
@@ -1123,6 +1124,72 @@ export const api = {
                   onEvent(eventData);
                 } catch (e) {
                   console.error('Error parsing API SSE chunk:', e, jsonStr);
+                }
+              }
+            }
+          }
+        }
+      })
+      .catch((err) => {
+        if (err.name !== 'AbortError') {
+          onError(err);
+        }
+      });
+
+    return () => {
+      controller.abort();
+    };
+  },
+
+  // Web Application Attack-Surface Analysis
+  analyzeWebApplicationAttackSurface: async (target: string, maxPages: number = 15): Promise<AttackSurfaceResult> => {
+    return await request(`/web-application-analysis/?target=${encodeURIComponent(target)}&max_pages=${maxPages}`);
+  },
+
+  streamWebApplicationAttackSurface: (
+    target: string,
+    maxPages: number = 15,
+    onEvent: (event: AttackSurfaceStreamEvent) => void,
+    onError: (error: any) => void
+  ): (() => void) => {
+    const controller = new AbortController();
+    const url = `${BASE_URL}/stream-web-application-analysis/?target=${encodeURIComponent(target)}&max_pages=${maxPages}`;
+
+    fetch(url, {
+      signal: controller.signal,
+      headers: {
+        Accept: 'text/event-stream'
+      }
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error('ReadableStream not supported');
+
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith('data:')) {
+              const jsonStr = trimmed.slice(5).trim();
+              if (jsonStr) {
+                try {
+                  const eventData = JSON.parse(jsonStr) as AttackSurfaceStreamEvent;
+                  onEvent(eventData);
+                } catch (e) {
+                  console.error('Error parsing Attack Surface SSE chunk:', e, jsonStr);
                 }
               }
             }

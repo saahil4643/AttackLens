@@ -13,7 +13,8 @@ import {
   Cpu,
   ShieldCheck,
   Lock,
-  Braces
+  Braces,
+  Layers
 } from 'lucide-react';
 
 interface MainLayoutProps {
@@ -249,6 +250,29 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
             >
               <Braces style={{ width: 16, height: 16, color: activePage === 'api-analysis' ? '#f0883e' : 'var(--fg-muted)' }} />
               API Deep Analysis
+            </button>
+
+            <button
+              onClick={() => setActivePage('attack-surface')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: '10px 14px',
+                borderRadius: 6,
+                border: 'none',
+                background: activePage === 'attack-surface' ? 'var(--bg-emphasis)' : 'transparent',
+                color: activePage === 'attack-surface' ? '#d29922' : 'var(--fg-muted)',
+                fontWeight: activePage === 'attack-surface' ? 600 : 500,
+                fontSize: 13,
+                cursor: 'pointer',
+                textAlign: 'left',
+                width: '100%',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              <Layers style={{ width: 16, height: 16, color: activePage === 'attack-surface' ? '#d29922' : 'var(--fg-muted)' }} />
+              Attack Surface Map
             </button>
           </nav>
         </div>

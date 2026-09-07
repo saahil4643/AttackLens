@@ -29,6 +29,8 @@ urlpatterns = [
     path('', include('tls_analysis.urls')),
     path('api/', include('api_analysis.urls')),
     path('', include('api_analysis.urls')),
+    path('api/', include('attack_surface.urls')),
+    path('', include('attack_surface.urls')),
 ]
 
 
