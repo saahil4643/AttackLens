@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     'scan',
     'technology_fingerprinting',
     'analysis',
+    'tls_analysis',
 ]
 
 

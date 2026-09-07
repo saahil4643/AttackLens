@@ -25,6 +25,8 @@ urlpatterns = [
     path('', include('technology_fingerprinting.urls')),
     path('api/', include('analysis.urls')),
     path('', include('analysis.urls')),
+    path('api/', include('tls_analysis.urls')),
+    path('', include('tls_analysis.urls')),
 ]
 
 
