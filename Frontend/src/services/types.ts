@@ -315,5 +315,143 @@ export type TechnologyFingerprintStreamEvent =
   | { event: 'error'; message: string }
   | { event: 'complete'; success: boolean; data: TechnologyFingerprintResult };
 
+// ─── Security Configuration & Web Security Analysis Types ───────────────────
+
+export interface SecurityFinding {
+  id: string;
+  title: string;
+  category: 'security_headers' | 'cookies' | 'cors' | 'https' | 'redirects' | 'http_methods' | 'information_disclosure' | string;
+  severity: 'high' | 'medium' | 'low' | 'info';
+  confidence: number; // 0.0 to 1.0 (e.g. 0.95 = 95%)
+  description: string;
+  evidence: Record<string, any>;
+  recommendation: string;
+}
+
+export interface SecurityHeaderDetail {
+  present: boolean;
+  status: 'pass' | 'warning' | 'fail' | 'info' | string;
+  value?: string | null;
+  directives?: Record<string, string[]>;
+  weak_aspects?: string[];
+  max_age?: number | null;
+  include_subdomains?: boolean;
+  preload?: boolean;
+  note?: string;
+  has_frame_ancestors?: boolean;
+  report_only?: boolean;
+}
+
+export interface CookieSecurityMetadata {
+  name: string;
+  secure: boolean;
+  httponly: boolean;
+  samesite: string | null;
+  domain: string | null;
+  path: string | null;
+  max_age?: string | null;
+  expires?: string | null;
+  is_session_indicator: boolean;
+}
+
+export interface CorsAnalysisDetail {
+  configured: boolean;
+  allow_origin: string | null;
+  allow_credentials: boolean | null;
+  allow_methods: string[];
+  allow_headers: string[];
+  expose_headers: string[];
+  max_age: number | null;
+  risk_level: 'none' | 'info' | 'medium' | 'high' | string;
+}
+
+export interface HttpsAnalysisDetail {
+  available: boolean;
+  tls_info?: {
+    tls_version?: string;
+    cipher?: string;
+    bits?: number;
+  };
+  http_to_https_redirect: boolean;
+  final_url: string;
+  redirect_count: number;
+}
+
+export interface RedirectHop {
+  hop: number;
+  status_code: number;
+  source: string;
+  location: string | null;
+}
+
+export interface SecurityConfigurationSummary {
+  total_findings: number;
+  high: number;
+  medium: number;
+  low: number;
+  info: number;
+  score: number;
+  score_grade: string;
+  score_label: string;
+  score_color: string;
+}
+
+export interface SecurityScoreData {
+  score: number;
+  score_name: string;
+  grade: string;
+  color: string;
+  label: string;
+  breakdown: {
+    total_findings: number;
+    high: number;
+    medium: number;
+    low: number;
+    info: number;
+  };
+}
+
+export interface SecurityConfigurationResult {
+  success: boolean;
+  target: string;
+  hostname: string;
+  resolved_ip: string | null;
+  final_url: string;
+  status_code: number | null;
+  scan_status: 'completed' | 'partial' | 'failed';
+  scan_duration_seconds: number;
+  summary: SecurityConfigurationSummary;
+  security_score: SecurityScoreData;
+  security_headers: Record<string, SecurityHeaderDetail>;
+  cookies: CookieSecurityMetadata[];
+  cors: CorsAnalysisDetail;
+  https: HttpsAnalysisDetail;
+  redirects: RedirectHop[];
+  http_methods: string[];
+  methods_detail?: {
+    methods: string[];
+    allow_header: string | null;
+    cors_methods_header: string | null;
+  };
+  information_disclosure: Record<string, string>;
+  raw_headers: Record<string, string>;
+  findings: SecurityFinding[];
+  errors?: string[];
+  error?: string;
+}
+
+export type SecurityConfigStreamEvent =
+  | { event: 'init'; target: string; message: string; elapsed_seconds?: number; data?: any }
+  | { event: 'probing_target'; message: string; target: string; elapsed_seconds?: number }
+  | { event: 'analyzing_headers'; message: string; target: string; elapsed_seconds?: number }
+  | { event: 'analyzing_cookies'; message: string; target: string; elapsed_seconds?: number }
+  | { event: 'analyzing_cors'; message: string; target: string; elapsed_seconds?: number }
+  | { event: 'checking_https_redirects'; message: string; target: string; elapsed_seconds?: number }
+  | { event: 'inspecting_http_methods'; message: string; target: string; elapsed_seconds?: number }
+  | { event: 'analyzing_info_disclosure'; message: string; target: string; elapsed_seconds?: number }
+  | { event: 'evaluating_findings'; message: string; target: string; elapsed_seconds?: number }
+  | { event: 'complete'; message: string; target: string; data: SecurityConfigurationResult; elapsed_seconds?: number }
+  | { event: 'error'; message: string; target: string; error?: string };
+
 
 

@@ -10,7 +10,8 @@ import {
   AlertCircle,
   Globe,
   Compass,
-  Cpu
+  Cpu,
+  ShieldCheck
 } from 'lucide-react';
 
 interface MainLayoutProps {
@@ -177,6 +178,29 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
             >
               <Cpu style={{ width: 16, height: 16, color: activePage === 'fingerprint' ? '#a371f7' : 'var(--fg-muted)' }} />
               Tech Fingerprinting
+            </button>
+
+            <button
+              onClick={() => setActivePage('security-config')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: '10px 14px',
+                borderRadius: 6,
+                border: 'none',
+                background: activePage === 'security-config' ? 'var(--bg-emphasis)' : 'transparent',
+                color: activePage === 'security-config' ? '#3fb950' : 'var(--fg-muted)',
+                fontWeight: activePage === 'security-config' ? 600 : 500,
+                fontSize: 13,
+                cursor: 'pointer',
+                textAlign: 'left',
+                width: '100%',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              <ShieldCheck style={{ width: 16, height: 16, color: activePage === 'security-config' ? '#3fb950' : 'var(--fg-muted)' }} />
+              Security Config
             </button>
           </nav>
         </div>

@@ -23,6 +23,8 @@ urlpatterns = [
     path('', include('scan.urls')),
     path('api/', include('technology_fingerprinting.urls')),
     path('', include('technology_fingerprinting.urls')),
+    path('api/', include('analysis.urls')),
+    path('', include('analysis.urls')),
 ]
 
 

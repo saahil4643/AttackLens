@@ -40,6 +40,7 @@ INSTALLED_APPS = [
     'corsheaders',
     'scan',
     'technology_fingerprinting',
+    'analysis',
 ]
 
 

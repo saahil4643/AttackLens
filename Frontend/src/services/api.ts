@@ -2,7 +2,8 @@ import {
   Project, Asset, Scan, Finding, Report, HttpInteraction, AuditLog, FindingStatus, SeverityCount,
   PortScanResult, PortScanStreamEvent, HttpDetectionResult, HttpDetectionStreamEvent,
   EndpointDiscoveryResult, EndpointDiscoveryStreamEvent,
-  TechnologyFingerprintResult, TechnologyFingerprintStreamEvent
+  TechnologyFingerprintResult, TechnologyFingerprintStreamEvent,
+  SecurityConfigurationResult, SecurityConfigStreamEvent
 } from './types';
 import { mockHttpHistory, mockAuditLogs } from './mockData';
 
@@ -895,6 +896,80 @@ export const api = {
                   onEvent(eventData);
                 } catch (e) {
                   console.error('Error parsing Technology Fingerprint SSE chunk:', e, jsonStr);
+                }
+              }
+            }
+          }
+        }
+      })
+      .catch((err) => {
+        if (err.name !== 'AbortError') {
+          onError(err);
+        }
+      });
+
+    return () => {
+      controller.abort();
+    };
+  },
+
+  // Security Configuration Analysis API (Synchronous)
+  analyzeSecurityConfiguration: async (target: string): Promise<SecurityConfigurationResult> => {
+    const params = new URLSearchParams();
+    params.set('target', target);
+
+    const directUrl = `${BACKEND_ROOT}/api/security-configuration/?${params.toString()}`;
+    const resp = await fetch(directUrl);
+    const data = await resp.json().catch(() => ({ error: resp.statusText }));
+    if (!resp.ok) {
+      throw new Error(data.error || 'Security configuration analysis failed');
+    }
+    return data;
+  },
+
+  // Security Configuration Analysis API (Live Streaming SSE)
+  streamSecurityConfiguration: (
+    target: string,
+    onEvent: (event: SecurityConfigStreamEvent) => void,
+    onError: (err: Error) => void
+  ): (() => void) => {
+    const params = new URLSearchParams();
+    params.set('target', target);
+
+    const streamUrl = `${BACKEND_ROOT}/stream-security-configuration/?${params.toString()}`;
+    const controller = new AbortController();
+
+    fetch(streamUrl, { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({ error: response.statusText }));
+          throw new Error(errData.error || errData.detail || 'Stream connection failed');
+        }
+
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error('ReadableStream not supported');
+
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith('data:')) {
+              const jsonStr = trimmed.slice(5).trim();
+              if (jsonStr) {
+                try {
+                  const eventData = JSON.parse(jsonStr) as SecurityConfigStreamEvent;
+                  onEvent(eventData);
+                } catch (e) {
+                  console.error('Error parsing Security Config SSE chunk:', e, jsonStr);
                 }
               }
             }
