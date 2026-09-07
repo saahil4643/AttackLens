@@ -453,5 +453,223 @@ export type SecurityConfigStreamEvent =
   | { event: 'complete'; message: string; target: string; data: SecurityConfigurationResult; elapsed_seconds?: number }
   | { event: 'error'; message: string; target: string; error?: string };
 
+// ─── TLS / SSL Security Analysis Types ───────────────────────────────────────
+
+export interface TlsFinding {
+  id: string;
+  title: string;
+  category: 'tls' | 'certificate' | 'protocol' | 'cipher' | string;
+  severity: 'high' | 'medium' | 'low' | 'info';
+  confidence: number; // 0.0 to 1.0 (e.g. 0.99 = 99%)
+  description: string;
+  evidence: Record<string, any>;
+  recommendation: string;
+}
+
+export interface TlsCertificateDetail {
+  valid: boolean;
+  is_time_valid: boolean;
+  is_expired: boolean;
+  not_yet_valid: boolean;
+  hostname_match: boolean;
+  expires_in_days: number;
+  valid_from: string;
+  valid_until: string;
+  subject: string;
+  subject_attributes?: Record<string, string>;
+  issuer: string;
+  issuer_attributes?: Record<string, string>;
+  common_name?: string | null;
+  san: string[];
+  public_key_algorithm: string;
+  public_key_size: number | null;
+  signature_algorithm: string;
+  serial_number: string;
+  version?: string;
+  is_self_signed: boolean;
+  error?: string;
+}
+
+export interface TlsCipherDetail {
+  name: string;
+  protocol: string;
+  bits: number | null;
+  forward_secrecy: boolean;
+  is_aead: boolean;
+  is_tls13?: boolean;
+}
+
+export interface TlsNegotiatedDetail {
+  tls_version: string | null;
+  cipher: TlsCipherDetail;
+}
+
+export interface TlsCertificateChainDetail {
+  status: 'available' | 'not_available' | string;
+  length: number;
+  note?: string;
+}
+
+export interface TlsOcspDetail {
+  status: 'observed' | 'not_observed' | 'not_available' | string;
+  length?: number;
+}
+
+export interface TlsSummary {
+  total_findings: number;
+  high: number;
+  medium: number;
+  low: number;
+  info: number;
+}
+
+export interface TlsAnalysisResult {
+  success: boolean;
+  target: string;
+  hostname: string;
+  port: number;
+  resolved_ip: string | null;
+  scan_status: 'completed' | 'partial' | 'failed';
+  scan_duration_seconds: number;
+  https_available: boolean;
+  tls_status: string;
+  status_color: string;
+  negotiated: TlsNegotiatedDetail;
+  supported_tls_versions: Record<string, boolean>;
+  version_probe_details?: Record<string, {
+    supported: boolean;
+    cipher?: string | null;
+    error?: string | null;
+    note?: string;
+  }>;
+  certificate: TlsCertificateDetail;
+  certificate_chain: TlsCertificateChainDetail;
+  ocsp_stapling: TlsOcspDetail;
+  findings: TlsFinding[];
+  summary: TlsSummary;
+  errors?: string[];
+  error?: string;
+}
+
+export type TlsAnalysisStreamEvent =
+  | { event: 'init'; target: string; message: string; elapsed_seconds?: number; data?: any }
+  | { event: 'resolving_dns'; message: string; target: string; elapsed_seconds?: number }
+  | { event: 'connecting_tls'; message: string; target: string; elapsed_seconds?: number }
+  | { event: 'analyzing_certificate'; message: string; target: string; elapsed_seconds?: number }
+  | { event: 'analyzing_ciphers'; message: string; target: string; elapsed_seconds?: number }
+  | { event: 'probing_tls_versions'; message: string; target: string; elapsed_seconds?: number }
+  | { event: 'evaluating_findings'; message: string; target: string; elapsed_seconds?: number }
+  | { event: 'complete'; message: string; target: string; data: TlsAnalysisResult; elapsed_seconds?: number }
+  | { event: 'error'; message: string; target: string; error?: string };
+
+// ─── API Deep Analysis & API Inventory Types ─────────────────────────────────
+
+export interface ApiParameter {
+  name: string;
+  location: 'path' | 'query' | 'header' | 'body' | 'cookie' | string;
+  type: 'string' | 'integer' | 'number' | 'boolean' | 'array' | 'object' | 'unknown' | string;
+  required: boolean;
+  description?: string;
+  example?: any;
+}
+
+export interface ApiAuthIndicator {
+  required: boolean;
+  type: 'bearer' | 'api_key' | 'basic' | 'oauth2' | 'cookie' | 'none' | 'restricted' | 'unknown' | string;
+  evidence: string[];
+  scheme_name?: string | null;
+}
+
+export interface ApiResponseInfo {
+  status_code?: number | null;
+  content_type?: string | null;
+  structure: 'object' | 'array' | 'primitive' | 'unknown' | string;
+  size_bytes?: number | null;
+  schema_summary?: string | null;
+}
+
+export interface ApiRateLimitInfo {
+  detected: boolean;
+  limit?: string | null;
+  remaining?: string | null;
+  reset?: string | null;
+  retry_after?: string | null;
+}
+
+export interface ApiEndpoint {
+  endpoint: string;
+  path: string;
+  hostname: string;
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS' | 'HEAD' | string;
+  type: 'REST' | 'GraphQL' | 'API Documentation' | 'Web Endpoint' | 'Unknown' | string;
+  version?: string | null;
+  source: 'openapi' | 'javascript' | 'crawler' | 'sitemap' | 'robots' | 'forms' | 'direct' | string;
+  summary?: string | null;
+  description?: string | null;
+  parameters: ApiParameter[];
+  authentication: ApiAuthIndicator;
+  response: ApiResponseInfo;
+  rate_limit: ApiRateLimitInfo;
+  cors?: {
+    allow_origin?: string | null;
+    allow_methods?: string | null;
+  };
+  confidence: number; // 0.0 to 1.0 (e.g. 0.95 = 95%)
+}
+
+export interface ApiDocumentationInfo {
+  url: string;
+  format: 'openapi_3' | 'swagger_2' | 'api_docs' | string;
+  title?: string | null;
+  version?: string | null;
+  endpoint_count: number;
+  auth_schemes: string[];
+}
+
+export interface ApiFinding {
+  id: string;
+  title: string;
+  category: 'api_documentation' | 'authentication' | 'rate_limiting' | 'graphql' | 'deprecated_version' | 'information_disclosure' | string;
+  severity: 'high' | 'medium' | 'low' | 'info';
+  confidence: number;
+  description: string;
+  evidence: Record<string, any>;
+  recommendation: string;
+}
+
+export interface ApiSummary {
+  total_api_endpoints: number;
+  rest_endpoints: number;
+  graphql_endpoints: number;
+  api_documentation: number;
+  authenticated_endpoints: number;
+  versions: string[];
+}
+
+export interface ApiInventoryResult {
+  success: boolean;
+  target: string;
+  hostname: string;
+  scan_status: 'completed' | 'partial' | 'failed';
+  scan_duration_seconds: number;
+  summary: ApiSummary;
+  api_documentation: ApiDocumentationInfo[];
+  endpoints: ApiEndpoint[];
+  findings: ApiFinding[];
+  errors?: string[];
+  error?: string;
+}
+
+export type ApiAnalysisStreamEvent =
+  | { event: 'init'; target: string; message: string; elapsed_seconds?: number; data?: any }
+  | { event: 'probing_openapi'; message: string; target: string; elapsed_seconds?: number }
+  | { event: 'detecting_graphql'; message: string; target: string; elapsed_seconds?: number }
+  | { event: 'discovering_endpoints'; message: string; target: string; elapsed_seconds?: number }
+  | { event: 'crawler_step'; message: string; target: string; elapsed_seconds?: number }
+  | { event: 'analyzing_api_endpoints'; message: string; target: string; elapsed_seconds?: number }
+  | { event: 'evaluating_observations'; message: string; target: string; elapsed_seconds?: number }
+  | { event: 'complete'; message: string; target: string; data: ApiInventoryResult; elapsed_seconds?: number }
+  | { event: 'error'; message: string; target: string; error?: string };
+
 
 

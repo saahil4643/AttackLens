@@ -3,7 +3,9 @@ import {
   PortScanResult, PortScanStreamEvent, HttpDetectionResult, HttpDetectionStreamEvent,
   EndpointDiscoveryResult, EndpointDiscoveryStreamEvent,
   TechnologyFingerprintResult, TechnologyFingerprintStreamEvent,
-  SecurityConfigurationResult, SecurityConfigStreamEvent
+  SecurityConfigurationResult, SecurityConfigStreamEvent,
+  TlsAnalysisResult, TlsAnalysisStreamEvent,
+  ApiInventoryResult, ApiAnalysisStreamEvent
 } from './types';
 import { mockHttpHistory, mockAuditLogs } from './mockData';
 
@@ -970,6 +972,157 @@ export const api = {
                   onEvent(eventData);
                 } catch (e) {
                   console.error('Error parsing Security Config SSE chunk:', e, jsonStr);
+                }
+              }
+            }
+          }
+        }
+      })
+      .catch((err) => {
+        if (err.name !== 'AbortError') {
+          onError(err);
+        }
+      });
+
+    return () => {
+      controller.abort();
+    };
+  },
+
+  // TLS / SSL Security Analysis API (Synchronous)
+  analyzeTls: async (target: string): Promise<TlsAnalysisResult> => {
+    const params = new URLSearchParams();
+    params.set('target', target);
+
+    const directUrl = `${BACKEND_ROOT}/api/tls-analysis/?${params.toString()}`;
+    const resp = await fetch(directUrl);
+    const data = await resp.json().catch(() => ({ error: resp.statusText }));
+    if (!resp.ok) {
+      throw new Error(data.error || 'TLS security analysis failed');
+    }
+    return data;
+  },
+
+  // TLS / SSL Security Analysis API (Live Streaming SSE)
+  streamTlsAnalysis: (
+    target: string,
+    onEvent: (event: TlsAnalysisStreamEvent) => void,
+    onError: (err: Error) => void
+  ): (() => void) => {
+    const params = new URLSearchParams();
+    params.set('target', target);
+
+    const streamUrl = `${BACKEND_ROOT}/stream-tls-analysis/?${params.toString()}`;
+    const controller = new AbortController();
+
+    fetch(streamUrl, { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({ error: response.statusText }));
+          throw new Error(errData.error || errData.detail || 'Stream connection failed');
+        }
+
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error('ReadableStream not supported');
+
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith('data:')) {
+              const jsonStr = trimmed.slice(5).trim();
+              if (jsonStr) {
+                try {
+                  const eventData = JSON.parse(jsonStr) as TlsAnalysisStreamEvent;
+                  onEvent(eventData);
+                } catch (e) {
+                  console.error('Error parsing TLS SSE chunk:', e, jsonStr);
+                }
+              }
+            }
+          }
+        }
+      })
+      .catch((err) => {
+        if (err.name !== 'AbortError') {
+          onError(err);
+        }
+      });
+
+    return () => {
+      controller.abort();
+    };
+  },
+
+  // API Deep Analysis & Inventory API (Synchronous)
+  analyzeApis: async (target: string, maxPages: number = 15): Promise<ApiInventoryResult> => {
+    const params = new URLSearchParams();
+    params.set('target', target);
+    params.set('max_pages', String(maxPages));
+
+    const directUrl = `${BACKEND_ROOT}/api/api-analysis/?${params.toString()}`;
+    const resp = await fetch(directUrl);
+    const data = await resp.json().catch(() => ({ error: resp.statusText }));
+    if (!resp.ok) {
+      throw new Error(data.error || 'API analysis failed');
+    }
+    return data;
+  },
+
+  // API Deep Analysis & Inventory API (Live Streaming SSE)
+  streamApiAnalysis: (
+    target: string,
+    onEvent: (event: ApiAnalysisStreamEvent) => void,
+    onError: (err: Error) => void,
+    maxPages: number = 15
+  ): (() => void) => {
+    const params = new URLSearchParams();
+    params.set('target', target);
+    params.set('max_pages', String(maxPages));
+
+    const streamUrl = `${BACKEND_ROOT}/stream-api-analysis/?${params.toString()}`;
+    const controller = new AbortController();
+
+    fetch(streamUrl, { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({ error: response.statusText }));
+          throw new Error(errData.error || errData.detail || 'Stream connection failed');
+        }
+
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error('ReadableStream not supported');
+
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith('data:')) {
+              const jsonStr = trimmed.slice(5).trim();
+              if (jsonStr) {
+                try {
+                  const eventData = JSON.parse(jsonStr) as ApiAnalysisStreamEvent;
+                  onEvent(eventData);
+                } catch (e) {
+                  console.error('Error parsing API SSE chunk:', e, jsonStr);
                 }
               }
             }

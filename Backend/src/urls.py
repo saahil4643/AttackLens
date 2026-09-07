@@ -27,6 +27,8 @@ urlpatterns = [
     path('', include('analysis.urls')),
     path('api/', include('tls_analysis.urls')),
     path('', include('tls_analysis.urls')),
+    path('api/', include('api_analysis.urls')),
+    path('', include('api_analysis.urls')),
 ]
 
 

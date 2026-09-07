@@ -5,6 +5,8 @@ import { HttpDetectionDashboard } from './pages/HttpDetectionDashboard';
 import { EndpointDiscoveryDashboard } from './pages/EndpointDiscoveryDashboard';
 import { TechnologyFingerprintingDashboard } from './pages/TechnologyFingerprintingDashboard';
 import { SecurityConfigurationDashboard } from './pages/SecurityConfigurationDashboard';
+import { TlsAnalysisDashboard } from './pages/TlsAnalysisDashboard';
+import { ApiAnalysisDashboard } from './pages/ApiAnalysisDashboard';
 
 function App() {
   const [activePage, setActivePage] = useState<string>('ports');
@@ -16,6 +18,8 @@ function App() {
       {activePage === 'endpoints' && <EndpointDiscoveryDashboard />}
       {activePage === 'fingerprint' && <TechnologyFingerprintingDashboard />}
       {activePage === 'security-config' && <SecurityConfigurationDashboard />}
+      {activePage === 'tls' && <TlsAnalysisDashboard />}
+      {activePage === 'api-analysis' && <ApiAnalysisDashboard />}
     </MainLayout>
   );
 }

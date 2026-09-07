@@ -11,7 +11,9 @@ import {
   Globe,
   Compass,
   Cpu,
-  ShieldCheck
+  ShieldCheck,
+  Lock,
+  Braces
 } from 'lucide-react';
 
 interface MainLayoutProps {
@@ -201,6 +203,52 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
             >
               <ShieldCheck style={{ width: 16, height: 16, color: activePage === 'security-config' ? '#3fb950' : 'var(--fg-muted)' }} />
               Security Config
+            </button>
+
+            <button
+              onClick={() => setActivePage('tls')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: '10px 14px',
+                borderRadius: 6,
+                border: 'none',
+                background: activePage === 'tls' ? 'var(--bg-emphasis)' : 'transparent',
+                color: activePage === 'tls' ? '#58a6ff' : 'var(--fg-muted)',
+                fontWeight: activePage === 'tls' ? 600 : 500,
+                fontSize: 13,
+                cursor: 'pointer',
+                textAlign: 'left',
+                width: '100%',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              <Lock style={{ width: 16, height: 16, color: activePage === 'tls' ? '#58a6ff' : 'var(--fg-muted)' }} />
+              TLS / SSL Analysis
+            </button>
+
+            <button
+              onClick={() => setActivePage('api-analysis')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: '10px 14px',
+                borderRadius: 6,
+                border: 'none',
+                background: activePage === 'api-analysis' ? 'var(--bg-emphasis)' : 'transparent',
+                color: activePage === 'api-analysis' ? '#f0883e' : 'var(--fg-muted)',
+                fontWeight: activePage === 'api-analysis' ? 600 : 500,
+                fontSize: 13,
+                cursor: 'pointer',
+                textAlign: 'left',
+                width: '100%',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              <Braces style={{ width: 16, height: 16, color: activePage === 'api-analysis' ? '#f0883e' : 'var(--fg-muted)' }} />
+              API Deep Analysis
             </button>
           </nav>
         </div>

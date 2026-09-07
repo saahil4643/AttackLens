@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     'technology_fingerprinting',
     'analysis',
     'tls_analysis',
+    'api_analysis',
 ]
 
 
