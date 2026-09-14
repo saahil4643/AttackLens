@@ -18,6 +18,8 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({ status, className = ''
     failed:         { cls: 'badge badge-critical', label: 'Failed' },
     open:           { cls: 'badge badge-high',     label: 'Open' },
     confirmed:      { cls: 'badge badge-critical', label: 'Confirmed' },
+    remediated:     { cls: 'badge badge-success',  label: 'Remediated' },
+    accepted:       { cls: 'badge badge-neutral',  label: 'Accepted Risk' },
     false_positive: { cls: 'badge badge-neutral',  label: 'False Positive' },
     accepted_risk:  { cls: 'badge badge-neutral',  label: 'Accepted Risk' },
     resolved:       { cls: 'badge badge-success',  label: 'Resolved' },

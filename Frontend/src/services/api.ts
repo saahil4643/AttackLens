@@ -6,7 +6,12 @@ import {
   SecurityConfigurationResult, SecurityConfigStreamEvent,
   TlsAnalysisResult, TlsAnalysisStreamEvent,
   ApiInventoryResult, ApiAnalysisStreamEvent,
-  AttackSurfaceResult, AttackSurfaceStreamEvent
+  AttackSurfaceResult, AttackSurfaceStreamEvent,
+  CodebaseScanResult, CodebaseScanStreamEvent,
+  UnifiedScanStartParams, UnifiedScanRecordData, UnifiedScanStreamEvent,
+  FindingsStats, UnifiedFindingsResponse, RiskScoreProfile, RiskTrendPoint,
+  AttackSurfaceCorrelationResponse, AttackSurfaceInventory, DashboardSummaryData,
+  ReportType, ReportFormat, ReportGenerationParams, SecurityReportItem
 } from './types';
 import { mockHttpHistory, mockAuditLogs } from './mockData';
 
@@ -167,22 +172,49 @@ function mapScan(a: any): Scan {
 }
 
 function mapFinding(f: any): Finding {
+  const references = Array.isArray(f.references)
+    ? f.references.map((r: any) => typeof r === 'string' ? r : (r.url || r.title || String(r)))
+    : (f.references ? [String(f.references)] : []);
+
+  const cvssVal = parseFloat(f.cvss !== undefined ? f.cvss : (f.cvss_score !== undefined ? f.cvss_score : 0)) || 0;
+  const statusVal = String(f.status || 'open').toLowerCase() as any;
+  const sevVal = String(f.severity || 'medium').toLowerCase() as any;
+
   return {
     id: String(f.id),
-    projectId: String(f.project),
-    assetId: String(f.asset),
-    title: f.title,
-    severity: (f.severity || 'info').toLowerCase() as any,
-    cvss: parseFloat(f.cvss_score) || 0,
+    projectId: f.project ? String(f.project) : (f.scanId || f.scan_id ? String(f.scanId || f.scan_id) : undefined),
+    scanId: f.scanId || f.scan_id || undefined,
+    assetId: f.asset ? String(f.asset) : undefined,
+    title: f.title || 'Security Finding',
+    severity: sevVal,
+    confidence: f.confidence || 'firm',
+    cvss: cvssVal,
+    cvss_score: cvssVal,
     cwe: f.cwe || '',
-    status: (f.status || 'open').toLowerCase() as any,
-    affectedAsset: f.location || '',
+    source_module: f.source_module || f.moduleId || '',
+    moduleId: f.moduleId || f.source_module || '',
+    source_module_name: f.source_module_name || f.moduleName || '',
+    moduleName: f.moduleName || f.source_module_name || '',
+    target: f.target || '',
+    location: f.location || '',
+    status: statusVal,
+    status_note: f.status_note || f.statusNote || '',
+    statusNote: f.status_note || f.statusNote || '',
+    affectedAsset: f.affectedAsset || f.location || f.target || 'Target Asset',
     description: f.description || '',
-    impact: f.description || '',
+    impact: f.impact || f.description || '',
     remediation: f.remediation || '',
-    references: f.references ? f.references.map((r: any) => typeof r === 'string' ? r : (r.url || r.title || 'Reference Link')) : [],
-    detectedTime: f.created_at,
-    evidence: f.evidence_summary || ''
+    evidence: f.evidence || f.evidence_summary || '',
+    request: f.request || f.request_data || '',
+    response: f.response || f.response_data || '',
+    references: references,
+    fingerprint_hash: f.fingerprint_hash || '',
+    occurrence_count: f.occurrence_count || 1,
+    first_seen: f.first_seen || f.detectedTime || f.created_at || '',
+    last_seen: f.last_seen || f.updated_at || '',
+    detectedTime: f.first_seen || f.detectedTime || f.created_at || new Date().toISOString(),
+    created_at: f.created_at || '',
+    updated_at: f.updated_at || '',
   };
 }
 
@@ -472,69 +504,241 @@ export const api = {
     return await request(`/jobs/${jobId}/cancel/`, { method: 'POST' });
   },
 
-  // Findings
-  getFindings: async (projectId?: string, assetId?: string): Promise<Finding[]> => {
+  // Findings (Unified Findings Engine)
+  getFindings: async (filtersOrProjectId?: any, assetId?: string): Promise<Finding[]> => {
     let path = '/findings/';
     const params = new URLSearchParams();
     
-    if (projectId) params.append('project', projectId);
-    if (assetId) params.append('asset', assetId);
+    if (typeof filtersOrProjectId === 'string') {
+      if (filtersOrProjectId && filtersOrProjectId !== 'all') params.append('target', filtersOrProjectId);
+      if (assetId) params.append('location', assetId);
+    } else if (filtersOrProjectId && typeof filtersOrProjectId === 'object') {
+      Object.entries(filtersOrProjectId).forEach(([k, v]) => {
+        if (v !== undefined && v !== null && v !== '' && v !== 'all') {
+          params.append(k, String(v));
+        }
+      });
+    }
     
     const query = params.toString();
     if (query) path += `?${query}`;
     
-    const data = await request(path);
-    return data.map(mapFinding);
+    try {
+      const resp = await request(path);
+      const items = resp.findings || resp.results || (Array.isArray(resp) ? resp : []);
+      return items.map(mapFinding);
+    } catch (e) {
+      console.error("Failed to fetch findings:", e);
+      return [];
+    }
+  },
+
+  getUnifiedFindings: async (filters: Record<string, any> = {}): Promise<UnifiedFindingsResponse> => {
+    let path = '/findings/';
+    const params = new URLSearchParams();
+    Object.entries(filters).forEach(([k, v]) => {
+      if (v !== undefined && v !== null && v !== '' && v !== 'all') {
+        params.append(k, String(v));
+      }
+    });
+    const query = params.toString();
+    if (query) path += `?${query}`;
+
+    try {
+      const resp = await request(path);
+      const items = resp.findings || resp.results || (Array.isArray(resp) ? resp : []);
+      return {
+        success: resp.success ?? true,
+        total: resp.total ?? items.length,
+        page: resp.page ?? 1,
+        page_size: resp.page_size ?? items.length,
+        total_pages: resp.total_pages ?? 1,
+        findings: items.map(mapFinding),
+        stats: resp.stats,
+      };
+    } catch (e) {
+      console.error("Failed to fetch unified findings:", e);
+      return {
+        success: false,
+        total: 0,
+        page: 1,
+        page_size: 50,
+        total_pages: 1,
+        findings: [],
+      };
+    }
   },
 
   getFinding: async (id: string): Promise<Finding | undefined> => {
     try {
-      const f = await request(`/findings/${id}/`);
-      const mapped = mapFinding(f);
-      
-      // Grab detailed evidence request / response details
-      try {
-        const evs = await request(`/findings/${id}/evidence/`);
-        if (evs && evs.length > 0) {
-          const firstEv = evs[0];
-          mapped.evidence = firstEv.payload || '';
-          mapped.request = firstEv.request_data || '';
-          mapped.response = firstEv.response_data || '';
-        }
-      } catch (e) {
-        console.error("Failed to load evidence records:", e);
-      }
-      
-      return mapped;
-    } catch {
+      const resp = await request(`/findings/${id}/`);
+      const raw = resp.finding || resp;
+      return mapFinding(raw);
+    } catch (e) {
+      console.error(`Failed to fetch finding ${id}:`, e);
       return undefined;
     }
   },
 
-  updateFindingStatus: async (id: string, status: FindingStatus): Promise<Finding | undefined> => {
+  updateFindingStatus: async (id: string, status: FindingStatus | string, note: string = ''): Promise<Finding | undefined> => {
     try {
-      const updated = await request(`/findings/${id}/`, {
-        method: 'PATCH',
+      const resp = await request(`/findings/${id}/status/`, {
+        method: 'POST',
         body: JSON.stringify({
-          status: status.toUpperCase()
+          status: status.toLowerCase(),
+          status_note: note,
+          note: note
         })
       });
-      return mapFinding(updated);
-    } catch {
-      return undefined;
+      const raw = resp.finding || resp;
+      return mapFinding(raw);
+    } catch (e) {
+      console.error(`Failed to update finding ${id} status:`, e);
+      // Fallback to legacy PATCH if needed
+      try {
+        const legacy = await request(`/findings/${id}/`, {
+          method: 'PATCH',
+          body: JSON.stringify({ status: status.toUpperCase() })
+        });
+        return mapFinding(legacy);
+      } catch {
+        return undefined;
+      }
+    }
+  },
+
+  bulkUpdateFindingStatus: async (findingIds: string[], status: FindingStatus | string, note: string = ''): Promise<{ success: boolean; updated_count: number }> => {
+    return await request('/findings/bulk-status/', {
+      method: 'POST',
+      body: JSON.stringify({
+        finding_ids: findingIds,
+        status: status.toLowerCase(),
+        status_note: note,
+        note: note
+      })
+    });
+  },
+
+  getFindingsStats: async (target?: string, scanId?: string): Promise<FindingsStats | null> => {
+    try {
+      let path = '/findings/stats/';
+      const params = new URLSearchParams();
+      if (target) params.append('target', target);
+      if (scanId) params.append('scan_id', scanId);
+      const query = params.toString();
+      if (query) path += `?${query}`;
+      const resp = await request(path);
+      return resp.stats || resp;
+    } catch (e) {
+      console.error("Failed to load findings stats:", e);
+      return null;
     }
   },
 
   // Reports
-  getReports: async (projectId?: string): Promise<Report[]> => {
-    const path = projectId ? `/reports/?project=${projectId}` : '/reports/';
-    const data = await request(path);
-    return data.map(mapReport);
+  getReports: async (target?: string, scanId?: string): Promise<Report[]> => {
+    try {
+      const params = new URLSearchParams();
+      if (target && target !== 'all') params.append('target', target);
+      if (scanId) params.append('scan_id', scanId);
+      const query = params.toString();
+      const path = query ? `/reports/?${query}` : '/reports/';
+      const data = await request(path);
+      const rawList = Array.isArray(data) ? data : (data?.results || data?.data || []);
+      if (Array.isArray(rawList)) {
+        return rawList.map((r: any) => ({
+          id: String(r.id),
+          title: r.title || r.name || 'Security Report',
+          name: r.title || r.name || 'Security Report',
+          report_type: (r.report_type || r.type || 'executive') as ReportType,
+          type: (r.report_type || r.type || 'executive') as ReportType,
+          format: (r.format || 'pdf') as ReportFormat,
+          target: r.target || 'Global Scope',
+          scan_id: r.scan_id,
+          status: (r.status || 'completed') as any,
+          overall_risk_score: r.overall_risk_score ?? r.risk_score ?? 0,
+          risk_score: r.overall_risk_score ?? r.risk_score ?? 0,
+          risk_level: r.risk_level || 'Informational',
+          grade: r.grade || 'A',
+          total_findings: r.total_findings ?? 0,
+          severity_breakdown: r.severity_breakdown || {},
+          summary_data: r.summary_data || {},
+          html_content: r.html_content,
+          created_at: r.created_at || r.generatedAt || new Date().toISOString(),
+          generatedAt: r.created_at || r.generatedAt || new Date().toISOString(),
+          downloadUrl: `${BASE_URL}/reports/${r.id}/download/`,
+          size: r.size || '24 KB',
+        }));
+      }
+      return [];
+    } catch (e) {
+      console.error("Failed to load reports:", e);
+      return [];
+    }
   },
 
-  generateReport: async (projectId: string, name: string, type: Report['type'], format: Report['format']): Promise<Report> => {
-    // GenerateReport is a no-op endpoint for reports since create report is read-only
-    throw new Error('PDF / technical report compilation is not yet implemented on the backend.');
+  generateSecurityReport: async (params: ReportGenerationParams | { target?: string; scan_id?: string; report_type: string; format?: string; title?: string }): Promise<Report | null> => {
+    try {
+      const resp = await request('/reports/generate/', {
+        method: 'POST',
+        body: JSON.stringify(params),
+      });
+      return resp?.report || resp?.data || resp;
+    } catch (e) {
+      console.error("Failed to generate security report:", e);
+      return null;
+    }
+  },
+
+  generateReport: async (
+    targetOrParams: string | ReportGenerationParams,
+    name?: string,
+    type?: Report['type'],
+    format?: Report['format']
+  ): Promise<Report> => {
+    if (typeof targetOrParams === 'object') {
+      const res = await api.generateSecurityReport(targetOrParams);
+      if (!res) throw new Error('Failed to generate report from backend.');
+      return res;
+    }
+    const res = await api.generateSecurityReport({
+      target: targetOrParams,
+      title: name,
+      report_type: (type || 'executive') as string,
+      format: format || 'pdf',
+    });
+    if (!res) throw new Error('Failed to generate report from backend.');
+    return res;
+  },
+
+  getReportDetail: async (reportId: string, includeHtml = true): Promise<Report | null> => {
+    try {
+      const resp = await request(`/reports/${reportId}/?include_html=${includeHtml}`);
+      return resp;
+    } catch (e) {
+      console.error("Failed to fetch report detail:", e);
+      return null;
+    }
+  },
+
+  getReportHtmlUrl: (reportId: string): string => {
+    return `${BASE_URL}/reports/${reportId}/html/`;
+  },
+
+  getReportDownloadUrl: (reportId: string): string => {
+    return `${BASE_URL}/reports/${reportId}/download/`;
+  },
+
+  deleteReport: async (reportId: string): Promise<boolean> => {
+    try {
+      await request(`/reports/${reportId}/`, {
+        method: 'DELETE',
+      });
+      return true;
+    } catch (e) {
+      console.error("Failed to delete report:", e);
+      return false;
+    }
   },
 
   // HTTP repeater simulations (maintained in memory history)
@@ -1205,8 +1409,345 @@ export const api = {
     return () => {
       controller.abort();
     };
+  },
+
+  // ─── Codebase Security Analysis (SAST) ──────────────────────────────────
+  scanCodebaseZip: async (file: File, name?: string): Promise<CodebaseScanResult> => {
+    const formData = new FormData();
+    formData.append('project', file);
+    if (name) {
+      formData.append('name', name);
+    }
+    const url = `${BASE_URL}/codebase-scan/`;
+    const response = await fetch(url, {
+      method: 'POST',
+      body: formData,
+    });
+    if (!response.ok) {
+      let errData;
+      try {
+        errData = await response.json();
+      } catch {
+        errData = { error: response.statusText };
+      }
+      throw new Error(errData.error || errData.detail || 'Codebase scan failed');
+    }
+    return await response.json();
+  },
+
+  scanSampleCodebase: async (): Promise<CodebaseScanResult> => {
+    return await request('/codebase-scan/sample/');
+  },
+
+  streamCodebaseZip: (
+    file: File,
+    name: string | undefined,
+    onEvent: (event: CodebaseScanStreamEvent) => void,
+    onError: (error: any) => void
+  ): (() => void) => {
+    const controller = new AbortController();
+    const formData = new FormData();
+    formData.append('project', file);
+    if (name) {
+      formData.append('name', name);
+    }
+    const url = `${BASE_URL}/stream-codebase-scan/`;
+
+    fetch(url, {
+      method: 'POST',
+      body: formData,
+      signal: controller.signal,
+      headers: {
+        Accept: 'text/event-stream'
+      }
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          let errData;
+          try {
+            errData = await response.json();
+          } catch {
+            errData = { error: response.statusText };
+          }
+          throw new Error(errData.error || errData.detail || 'Codebase stream connection failed');
+        }
+
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error('ReadableStream not supported');
+
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith('data:')) {
+              const jsonStr = trimmed.slice(5).trim();
+              if (jsonStr) {
+                try {
+                  const eventData = JSON.parse(jsonStr) as CodebaseScanStreamEvent;
+                  onEvent(eventData);
+                } catch (e) {
+                  console.error('Error parsing Codebase SSE chunk:', e, jsonStr);
+                }
+              }
+            }
+          }
+        }
+      })
+      .catch((err) => {
+        if (err.name !== 'AbortError') {
+          onError(err);
+        }
+      });
+
+    return () => {
+      controller.abort();
+    };
+  },
+
+  // ─── Unified Scan Orchestrator APIs ──────────────────────────────────────────
+  
+  startUnifiedScan: async (params: UnifiedScanStartParams, zipFile?: File | null): Promise<{ success: boolean; scan_id: string; message: string; scan: UnifiedScanRecordData }> => {
+    if (zipFile) {
+      const formData = new FormData();
+      formData.append('target', params.target);
+      if (params.modules) formData.append('modules', JSON.stringify(params.modules));
+      if (params.scan_profile) formData.append('scan_profile', params.scan_profile);
+      if (params.intensity) formData.append('intensity', params.intensity);
+      formData.append('codebase_source_type', 'zip');
+      formData.append('file', zipFile);
+
+      const url = `${BASE_URL}/unified-scan/start/`;
+      const response = await fetch(url, {
+        method: 'POST',
+        body: formData
+      });
+      if (!response.ok) {
+        let errData;
+        try { errData = await response.json(); } catch { errData = { error: response.statusText }; }
+        throw new Error(errData.error || errData.detail || 'Failed to start unified scan with ZIP');
+      }
+      return await response.json();
+    } else {
+      return await request('/unified-scan/start/', {
+        method: 'POST',
+        body: JSON.stringify(params)
+      });
+    }
+  },
+
+  getUnifiedScanStatus: async (scanId: string): Promise<any> => {
+    return await request(`/unified-scan/${scanId}/status/`);
+  },
+
+  getUnifiedScanResults: async (scanId: string): Promise<{ success: boolean; scan: UnifiedScanRecordData }> => {
+    return await request(`/unified-scan/${scanId}/results/`);
+  },
+
+  getUnifiedScans: async (): Promise<UnifiedScanRecordData[]> => {
+    try {
+      const resp = await request('/unified-scan/list/');
+      return resp.scans || resp.data || (Array.isArray(resp) ? resp : []);
+    } catch (e) {
+      console.error("Failed to list unified scans:", e);
+      return [];
+    }
+  },
+
+  abortUnifiedScan: async (scanId: string): Promise<any> => {
+    return await request(`/unified-scan/${scanId}/abort/`, {
+      method: 'POST'
+    });
+  },
+
+  listUnifiedScans: async (): Promise<{ success: boolean; count: number; scans: UnifiedScanRecordData[] }> => {
+    return await request('/unified-scan/list/');
+  },
+
+  streamUnifiedScan: (
+    scanId: string,
+    onEvent: (event: UnifiedScanStreamEvent) => void,
+    onError: (err: any) => void
+  ): (() => void) => {
+    const controller = new AbortController();
+    const url = `${BASE_URL}/unified-scan/${scanId}/stream/`;
+
+    fetch(url, {
+      method: 'GET',
+      signal: controller.signal,
+      headers: {
+        Accept: 'text/event-stream'
+      }
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          let errData;
+          try { errData = await response.json(); } catch { errData = { error: response.statusText }; }
+          throw new Error(errData.error || errData.detail || 'Unified scan stream connection failed');
+        }
+
+        const reader = response.body?.getReader();
+        if (!reader) throw new Error('ReadableStream not supported');
+
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith('data:')) {
+              const jsonStr = trimmed.slice(5).trim();
+              if (jsonStr) {
+                try {
+                  const eventData = JSON.parse(jsonStr) as UnifiedScanStreamEvent;
+                  onEvent(eventData);
+                } catch (e) {
+                  console.error('Error parsing Unified Scan SSE chunk:', e, jsonStr);
+                }
+              }
+            }
+          }
+        }
+      })
+      .catch((err) => {
+        if (err.name !== 'AbortError') {
+          onError(err);
+        }
+      });
+
+    return () => {
+      controller.abort();
+    };
+  },
+
+  // ─── Risk Scoring Engine Endpoints ──────────────────────────────────────────
+  getRiskSummary: async (target?: string): Promise<RiskScoreProfile | null> => {
+    try {
+      const path = target ? `/risk/summary/?target=${encodeURIComponent(target)}` : '/risk/summary/';
+      const resp = await request(path);
+      return resp.risk || resp;
+    } catch (e) {
+      console.error("Failed to load risk summary:", e);
+      return null;
+    }
+  },
+
+  getTargetRisk: async (target: string): Promise<RiskScoreProfile | null> => {
+    try {
+      const resp = await request(`/risk/target/?target=${encodeURIComponent(target)}`);
+      return resp.risk || resp;
+    } catch (e) {
+      console.error(`Failed to load risk for target ${target}:`, e);
+      return null;
+    }
+  },
+
+  getScanRisk: async (scanId: string): Promise<RiskScoreProfile | null> => {
+    try {
+      const resp = await request(`/risk/scan/${scanId}/`);
+      return resp.risk || resp;
+    } catch (e) {
+      console.error(`Failed to load risk for scan ${scanId}:`, e);
+      return null;
+    }
+  },
+
+  getRiskTrends: async (limit: number = 15): Promise<RiskTrendPoint[]> => {
+    try {
+      const resp = await request(`/risk/trends/?limit=${limit}`);
+      return resp.trends || [];
+    } catch (e) {
+      console.error("Failed to load risk trends:", e);
+      return [];
+    }
+  },
+
+  recalculateRisk: async (target?: string): Promise<RiskScoreProfile | null> => {
+    try {
+      const path = target ? `/risk/recalculate/?target=${encodeURIComponent(target)}` : '/risk/recalculate/';
+      const resp = await request(path, { method: 'POST' });
+      return resp.risk || resp;
+    } catch (e) {
+      console.error("Failed to recalculate risk:", e);
+      return null;
+    }
+  },
+
+  // ─── Attack Surface Correlation Endpoints ────────────────────────────────────
+  getAttackSurfaceCorrelation: async (target?: string, scanId?: string): Promise<AttackSurfaceCorrelationResponse | null> => {
+    try {
+      const params = new URLSearchParams();
+      if (target && target !== 'all') params.append('target', target);
+      if (scanId) params.append('scan_id', scanId);
+      const query = params.toString();
+      const path = query ? `/attack-surface/correlation/?${query}` : '/attack-surface/correlation/';
+      const resp = await request(path);
+      return resp;
+    } catch (e) {
+      console.error("Failed to load attack surface correlation:", e);
+      return null;
+    }
+  },
+
+  getAttackSurfaceInventory: async (target?: string, scanId?: string): Promise<any> => {
+    try {
+      const params = new URLSearchParams();
+      if (target && target !== 'all') params.append('target', target);
+      if (scanId) params.append('scan_id', scanId);
+      const query = params.toString();
+      const path = query ? `/attack-surface/inventory/?${query}` : '/attack-surface/inventory/';
+      const resp = await request(path);
+      return resp;
+    } catch (e) {
+      console.error("Failed to load attack surface inventory:", e);
+      return null;
+    }
+  },
+
+  triggerAttackSurfaceCorrelation: async (target?: string, scanId?: string): Promise<AttackSurfaceCorrelationResponse | null> => {
+    try {
+      const resp = await request('/attack-surface/correlate/', {
+        method: 'POST',
+        body: JSON.stringify({ target, scan_id: scanId })
+      });
+      return resp.data || resp;
+    } catch (e) {
+      console.error("Failed to trigger correlation:", e);
+      return null;
+    }
+  },
+
+  getDashboardSummary: async (target?: string): Promise<DashboardSummaryData | null> => {
+    try {
+      const params = new URLSearchParams();
+      if (target && target !== 'all') params.append('target', target);
+      const query = params.toString();
+      const path = query ? `/dashboard/summary/?${query}` : '/dashboard/summary/';
+      const resp = await request(path);
+      return resp;
+    } catch (e) {
+      console.error("Failed to load command center dashboard summary:", e);
+      return null;
+    }
   }
 };
+
+
 
 
 

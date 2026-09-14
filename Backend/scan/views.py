@@ -825,14 +825,61 @@ def stream_http_detection(request):
 # ─────────────────────────────────────────────────────────────────────────────
 
 API_PATTERN_REGEX = re.compile(
-    r'(?:^|/)(?:api|v[0-9]+|graphql|rest|auth|oauth|users|products|search|login|logout|register|webhooks|admin)(?:/|[?#]|$)',
+    r'(?:^|/)(?:api|v[0-9]+|graphql|rest|auth|oauth|users|products|search|login|logout|register|webhooks|admin|health|status|metrics|swagger|openapi|docs|schema|token|refresh|me|profile|settings|config|upload|download|export|import|verify|reset|callback)(?:/|[?#]|$)',
     re.IGNORECASE
 )
 
 JS_PATH_REGEX = re.compile(
-    r'(?:["\'`])(/(?:api|v[0-9]+|graphql|auth|users|products|search|admin|login|logout)[a-zA-Z0-9_\-/?#&=.]*|https?://[a-zA-Z0-9_\-.]+(?:/[a-zA-Z0-9_\-/?#&=.]*)?)(?:["\'`])',
+    r'(?:["\'`])(/(?:api|v[0-9]+|graphql|auth|users|products|search|admin|login|logout|health|status|metrics|docs|schema|token|me|profile|settings|upload|export)[a-zA-Z0-9_\-/?#&=.]*|https?://[a-zA-Z0-9_\-.]+(?:/[a-zA-Z0-9_\-/?#&=.]*)?)(?:["\'`])',
     re.IGNORECASE
 )
+
+# Comprehensive API route wordlist to actively probe — covers REST v1/v2/v3, Django, Flask, FastAPI, Express, Spring, Rails conventions
+COMMON_API_PROBE_PATHS = [
+    # Health & Status
+    "/health", "/health/", "/healthz", "/ping", "/status", "/ready", "/live",
+    "/api/health", "/api/status", "/api/ping",
+    # REST API versioning patterns
+    "/api/", "/api/v1/", "/api/v2/", "/api/v3/",
+    "/api/v1/users", "/api/v1/user", "/api/v1/me", "/api/v1/profile",
+    "/api/v1/auth", "/api/v1/auth/login", "/api/v1/auth/logout",
+    "/api/v1/auth/token", "/api/v1/auth/refresh", "/api/v1/auth/register",
+    "/api/v1/login", "/api/v1/logout", "/api/v1/register",
+    "/api/v1/products", "/api/v1/items", "/api/v1/search",
+    "/api/v1/admin", "/api/v1/settings", "/api/v1/config",
+    "/api/v2/users", "/api/v2/auth/login", "/api/v2/me",
+    # Authentication & Identity
+    "/auth/", "/auth/login", "/auth/logout", "/auth/token", "/auth/refresh",
+    "/auth/register", "/auth/me", "/auth/callback",
+    "/login", "/logout", "/register", "/signup", "/signin",
+    "/oauth/authorize", "/oauth/token", "/oauth/callback",
+    # Admin routes
+    "/admin/", "/admin/login", "/admin/api/",
+    # API Documentation / Schema discovery
+    "/docs", "/docs/", "/redoc", "/redoc/",
+    "/swagger", "/swagger/", "/swagger.json", "/swagger.yaml",
+    "/openapi.json", "/openapi.yaml", "/openapi/",
+    "/api/schema/", "/api/docs/", "/api-docs/", "/api/swagger/",
+    # Django REST Framework
+    "/api/token/", "/api/token/refresh/", "/api-auth/login/",
+    "/api/schema/swagger-ui/", "/api/schema/redoc/",
+    # FastAPI / Starlette
+    "/docs#/", "/openapi.json",
+    # Spring Boot Actuator
+    "/actuator", "/actuator/health", "/actuator/info", "/actuator/env",
+    "/actuator/metrics", "/actuator/loggers",
+    # GraphQL
+    "/graphql", "/graphql/", "/api/graphql",
+    # Common app routes
+    "/api/v1/notifications", "/api/v1/messages",
+    "/api/v1/orders", "/api/v1/payments", "/api/v1/cart",
+    "/api/v1/posts", "/api/v1/comments", "/api/v1/categories",
+    "/api/v1/files", "/api/v1/upload", "/api/v1/download",
+    "/api/v1/reports", "/api/v1/analytics", "/api/v1/logs",
+    "/api/v1/roles", "/api/v1/permissions",
+    # Metrics & Monitoring
+    "/metrics", "/metrics/", "/_health", "/_status",
+]
 
 
 def is_same_scope(candidate_url: str, base_hostname: str) -> bool:
@@ -1082,9 +1129,58 @@ def crawl_target_endpoints(target_info, max_pages=25, event_callback=None):
         except Exception:
             continue
 
+    # ── 4. Active API Route Probing (wordlist-based) ──────────────────────────
+    # Many API endpoints return JSON and have no HTML links pointing to them.
+    # Probe COMMON_API_PROBE_PATHS in parallel to discover routes that crawlers miss.
+    if event_callback:
+        event_callback("api_probing", f"Active-probing {len(COMMON_API_PROBE_PATHS)} known API route patterns...")
+
+    def probe_path(path: str):
+        """Probe a single API path; return (url, status_code) if alive, else None."""
+        candidate_url = clean_url_path(urllib.parse.urljoin(base_origin, path))
+        try:
+            r = session.get(
+                candidate_url,
+                timeout=3.0,
+                allow_redirects=False,
+                verify=False,
+            )
+            # 2xx = success, 3xx = redirect (path exists), 401/403 = auth-protected (exists),
+            # 405 = method not allowed (route exists but wrong method), 422 = validation error (FastAPI)
+            if r.status_code in (200, 201, 204, 301, 302, 307, 308, 400, 401, 403, 405, 422):
+                return (candidate_url, r.status_code)
+        except Exception:
+            pass
+        return None
+
+    # Probe in parallel with a bounded thread pool so it stays fast
+    with ThreadPoolExecutor(max_workers=20) as probe_executor:
+        probe_futures = {probe_executor.submit(probe_path, p): p for p in COMMON_API_PROBE_PATHS}
+        for future in as_completed(probe_futures):
+            probe_result = future.result()
+            if probe_result:
+                probed_url, status_code = probe_result
+                register_endpoint(probed_url)
+                if event_callback:
+                    event_callback("api_route_found", f"[{status_code}] {probed_url}")
+
     all_endpoints = sorted(list(in_scope_endpoints | out_of_scope_endpoints))
     all_api_paths = sorted(list(in_scope_api_paths | out_of_scope_api_paths))
     all_javascript_files = sorted(list(in_scope_javascript_files | out_of_scope_javascript_files))
+
+    # Build structured discovered_endpoints list (URL + path + method + scope) for UI rendering
+    discovered_endpoints_structured = []
+    for ep_url in sorted(list(in_scope_endpoints)):
+        parsed_ep = urllib.parse.urlparse(ep_url)
+        ep_path = parsed_ep.path or "/"
+        discovered_endpoints_structured.append({
+            "url": ep_url,
+            "path": ep_path,
+            "method": "GET",
+            "status_code": 200,
+            "scope": "in-scope",
+            "is_api": bool(API_PATTERN_REGEX.search(ep_path)),
+        })
 
     return {
         "target": start_url,
@@ -1110,6 +1206,7 @@ def crawl_target_endpoints(target_info, max_pages=25, event_callback=None):
             "external_domains": sorted(list(external_domains))
         },
         "endpoints": all_endpoints,
+        "discovered_endpoints": discovered_endpoints_structured,
         "in_scope_endpoints": sorted(list(in_scope_endpoints)),
         "out_of_scope_endpoints": sorted(list(out_of_scope_endpoints)),
         "api_paths": all_api_paths,

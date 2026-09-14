@@ -54,7 +54,7 @@ export interface Scan {
 }
 
 export type FindingSeverity = 'critical' | 'high' | 'medium' | 'low' | 'info';
-export type FindingStatus = 'open' | 'confirmed' | 'false_positive' | 'accepted_risk' | 'resolved';
+export type FindingStatus = 'open' | 'confirmed' | 'remediated' | 'accepted' | 'false_positive' | 'accepted_risk' | 'resolved';
 
 export interface CodeContext {
   file: string;
@@ -66,39 +66,299 @@ export interface CodeContext {
 
 export interface Finding {
   id: string;
-  projectId: string;
-  assetId: string;
+  projectId?: string;
+  scanId?: string;
+  assetId?: string;
   title: string;
   severity: FindingSeverity;
+  confidence?: 'certain' | 'firm' | 'tentative';
   cvss: number;
+  cvss_score?: number;
   cwe?: string;
+  source_module?: string;
+  moduleId?: string;
+  source_module_name?: string;
+  moduleName?: string;
+  target?: string;
+  location?: string;
   status: FindingStatus;
+  status_note?: string;
+  statusNote?: string;
   affectedAsset: string;
   description: string;
-  impact: string;
-  remediation: string;
-  evidence?: string;
+  impact?: string;
+  remediation?: string;
+  evidence?: any;
   request?: string;
   response?: string;
   references: string[];
+  fingerprint_hash?: string;
+  occurrence_count?: number;
+  first_seen?: string;
+  last_seen?: string;
   detectedTime: string;
   codeContext?: CodeContext;
+  created_at?: string;
+  updated_at?: string;
 }
 
-export type ReportType = 'executive' | 'technical' | 'network' | 'web' | 'api' | 'code';
-export type ReportFormat = 'pdf' | 'csv' | 'html';
-export type ReportStatus = 'ready' | 'generating' | 'failed';
+export interface FindingsStats {
+  total_findings: number;
+  active_vulnerabilities: number;
+  remediated_count: number;
+  accepted_risk_count: number;
+  false_positive_count: number;
+  by_severity: {
+    critical: number;
+    high: number;
+    medium: number;
+    low: number;
+    info: number;
+    total: number;
+  };
+  by_status: {
+    open: number;
+    confirmed: number;
+    remediated: number;
+    accepted: number;
+    false_positive: number;
+  };
+  by_module: Record<string, number>;
+  top_targets: Array<{ target: string; count: number }>;
+  top_cwes: Array<{ cwe: string; count: number }>;
+}
+
+export interface UnifiedFindingsResponse {
+  success: boolean;
+  total: number;
+  page: number;
+  page_size: number;
+  total_pages: number;
+  findings: Finding[];
+  stats?: FindingsStats;
+}
+
+export type RiskLevel = 'Critical' | 'High' | 'Medium' | 'Low' | 'Informational';
+export type RiskGrade = 'A' | 'B' | 'C' | 'D' | 'F';
+
+export interface ModuleRiskDetail {
+  module_id: string;
+  name: string;
+  risk_score: number;
+  posture_score: number;
+  risk_level: RiskLevel;
+  grade: RiskGrade;
+  finding_count: number;
+  highest_severity: FindingSeverity;
+}
+
+export interface TargetRiskDetail {
+  target: string;
+  risk_score: number;
+  risk_level: RiskLevel;
+  grade: RiskGrade;
+  finding_count: number;
+}
+
+export interface RiskScoreProfile {
+  overall_risk_score: number;
+  posture_score: number;
+  risk_level: RiskLevel;
+  grade: RiskGrade;
+  total_findings: number;
+  active_findings_count: number;
+  remediated_count: number;
+  accepted_risk_count: number;
+  severity_breakdown: {
+    critical: number;
+    high: number;
+    medium: number;
+    low: number;
+    info: number;
+    total: number;
+    active_critical: number;
+    active_high: number;
+    active_medium: number;
+    active_low: number;
+    active_info: number;
+  };
+  severity_risk_contributions: Record<string, number>;
+  module_risk_breakdown: Record<string, ModuleRiskDetail>;
+  target_risk_breakdown: TargetRiskDetail[];
+  top_risks: Finding[];
+  target?: string;
+  scan_id?: string;
+  calculated_at: string;
+}
+
+export interface RiskTrendPoint {
+  scan_id: string;
+  target: string;
+  timestamp: string;
+  risk_score: number;
+  posture_score: number;
+  grade: RiskGrade;
+  risk_rating: string;
+  findings_summary: Record<string, number>;
+}
+
+export type AttackSurfaceNodeType =
+  | 'target'
+  | 'domain'
+  | 'ip'
+  | 'port'
+  | 'service'
+  | 'tls'
+  | 'technology'
+  | 'endpoint'
+  | 'api'
+  | 'finding';
+
+export interface AttackSurfaceNode {
+  id: string;
+  label: string;
+  type: AttackSurfaceNodeType;
+  category: string;
+  risk_score: number;
+  severity: FindingSeverity;
+  metadata: Record<string, any>;
+}
+
+export interface AttackSurfaceEdge {
+  id: string;
+  source: string;
+  target: string;
+  relationship: string;
+  label: string;
+}
+
+export interface AttackSurfaceGraph {
+  nodes: AttackSurfaceNode[];
+  edges: AttackSurfaceEdge[];
+}
+
+export interface AttackSurfaceTreeNode {
+  id: string;
+  name: string;
+  type: string;
+  category?: string;
+  ip?: string;
+  children: AttackSurfaceTreeNode[];
+}
+
+export interface AttackSurfaceSummary {
+  total_assets: number;
+  domain_count: number;
+  ip_count: number;
+  port_count: number;
+  service_count: number;
+  technology_count: number;
+  endpoint_count: number;
+  api_count: number;
+  tls_count: number;
+  finding_count: number;
+  overall_risk_score: number;
+  posture_score: number;
+  risk_level: RiskLevel;
+  grade: RiskGrade;
+}
+
+export interface AttackSurfaceInventory {
+  domains: Array<{ name: string; ip: string; type: string }>;
+  ports: Array<{ port: number; protocol: string; service: string; state: string }>;
+  services: Array<{ name: string; port: number; banner?: string }>;
+  technologies: Array<{ name: string; category: string; version?: string }>;
+  endpoints: Array<{ path: string; method: string; status_code?: number }>;
+  apis: Array<{ path: string; method: string; auth_required?: boolean }>;
+  tls: Array<{ version: string; cipher?: string; issuer?: string }>;
+  findings: Array<{
+    id: string;
+    title: string;
+    severity: FindingSeverity;
+    cvss: number;
+    status: FindingStatus;
+    cwe?: string;
+    source_module?: string;
+    correlated_asset_id?: string;
+    correlated_asset_label?: string;
+  }>;
+}
+
+export interface AttackSurfaceCorrelationResponse {
+  success: boolean;
+  target: string;
+  scan_id?: string;
+  summary: AttackSurfaceSummary;
+  graph: AttackSurfaceGraph;
+  tree: AttackSurfaceTreeNode;
+  inventory: AttackSurfaceInventory;
+  risk_profile?: RiskScoreProfile;
+}
+
+export type ReportType = 'executive' | 'technical' | 'attack_surface' | 'full_audit' | 'network' | 'web' | 'api' | 'code';
+export type ReportFormat = 'pdf' | 'html' | 'json' | 'csv';
+export type ReportStatus = 'ready' | 'completed' | 'generating' | 'failed';
+
+export interface SecurityReportItem {
+  id: string;
+  title: string;
+  name?: string;
+  report_type: ReportType;
+  type?: ReportType;
+  format: ReportFormat;
+  target: string;
+  scan_id?: string | null;
+  status: ReportStatus;
+  overall_risk_score: number;
+  risk_score?: number;
+  risk_level: string;
+  grade: string;
+  total_findings: number;
+  severity_breakdown: Record<string, number>;
+  summary_data?: Record<string, any>;
+  html_content?: string;
+  created_at: string;
+  generatedAt?: string;
+  size?: string;
+}
+
+export interface ReportGenerationParams {
+  target?: string;
+  scan_id?: string;
+  report_type?: ReportType | string;
+  format?: ReportFormat | string;
+  title?: string;
+  name?: string;
+  executive_summary?: string;
+  include_evidence?: boolean;
+  include_remediation?: boolean;
+}
 
 export interface Report {
   id: string;
-  projectId: string;
-  name: string;
-  type: ReportType;
+  projectId?: string;
+  title?: string;
+  name?: string;
+  report_type?: ReportType;
+  type?: ReportType;
   format: ReportFormat;
-  generatedAt: string;
+  target?: string;
+  scan_id?: string | null;
+  generatedAt?: string;
+  created_at?: string;
   status: ReportStatus;
+  overall_risk_score?: number;
+  risk_score?: number;
+  risk_level?: string;
+  grade?: string;
+  total_findings?: number;
+  severity_breakdown?: Record<string, number>;
+  summary_data?: Record<string, any>;
+  html_content?: string;
+  downloadUrl?: string;
   size?: string;
 }
+
 
 export interface HttpHeader {
   key: string;
@@ -886,6 +1146,276 @@ export type AttackSurfaceStreamEvent =
   | { event: 'attack_surface_correlation'; message: string; target: string; elapsed_seconds?: number }
   | { event: 'complete'; message: string; target: string; data: AttackSurfaceResult; elapsed_seconds?: number }
   | { event: 'error'; message: string; target: string; error?: string };
+
+// ─── Codebase Security Analysis (SAST) Types ───────────────────────────────
+
+export interface CodebaseCodeContext {
+  start_line: number;
+  end_line: number;
+  target_line: number;
+  content: string;
+}
+
+export interface CodebaseTaintStep {
+  step: 'SOURCE' | 'FLOW' | 'PROPAGATION' | 'SINK';
+  line: number;
+  code: string;
+}
+
+export interface CodebaseFinding {
+  id: string;
+  display_id?: string;
+  title: string;
+  severity: 'critical' | 'high' | 'medium' | 'low' | 'info';
+  confidence: number;
+  category:
+    | 'injection'
+    | 'authentication'
+    | 'authorization'
+    | 'cryptography'
+    | 'secrets'
+    | 'configuration'
+    | 'file_handling'
+    | 'deserialization'
+    | 'ssrf'
+    | 'xss'
+    | 'session'
+    | 'csrf'
+    | 'input_validation'
+    | 'information_disclosure'
+    | 'other'
+    | string;
+  cwe: string;
+  file: string;
+  line: number;
+  code_context: CodebaseCodeContext;
+  description: string;
+  evidence: string;
+  recommendation: string;
+  taint_flow?: CodebaseTaintStep[];
+}
+
+export interface CodebaseLanguage {
+  language: string;
+  file_count: number;
+  bytes: number;
+  percentage: number;
+}
+
+export interface CodebaseFramework {
+  name: string;
+  language: string;
+  type: string;
+  confidence: number;
+  evidence: string[];
+}
+
+export interface CodebaseDependency {
+  name: string;
+  version: string;
+  source: string;
+  ecosystem: string;
+  scope?: string;
+}
+
+export interface CodebaseFileItem {
+  path: string;
+  name: string;
+  extension: string;
+  language: string;
+  category: string;
+  size: number;
+  is_excluded: boolean;
+}
+
+export interface CodebaseProjectMeta {
+  name: string;
+  files: number;
+  source_files: number;
+  total_bytes: number;
+  categories?: Record<string, number>;
+}
+
+export interface CodebaseScanStatistics {
+  files_scanned: number;
+  files_skipped: number;
+  findings_count: number;
+  rules_executed: number;
+  scan_duration_seconds: number;
+}
+
+export interface CodebaseScanResult {
+  success: boolean;
+  scan_status: 'completed' | 'partial' | 'rejected' | 'failed';
+  project: CodebaseProjectMeta;
+  languages: CodebaseLanguage[];
+  frameworks: CodebaseFramework[];
+  dependencies: CodebaseDependency[];
+  findings: CodebaseFinding[];
+  summary: SeverityCount;
+  statistics: CodebaseScanStatistics;
+  errors?: Array<{ file: string; error: string }>;
+  error?: string;
+}
+
+export type CodebaseScanStreamEvent =
+  | { event: 'init'; message: string; project: string; elapsed_seconds?: number }
+  | { event: 'extracting'; message: string; project?: string; elapsed_seconds?: number }
+  | { event: 'inventory'; message: string; project?: string; elapsed_seconds?: number }
+  | { event: 'dependencies'; message: string; project?: string; elapsed_seconds?: number }
+  | { event: 'frameworks'; message: string; project?: string; elapsed_seconds?: number }
+  | { event: 'analyzing_code'; message: string; project?: string; elapsed_seconds?: number }
+  | { event: 'progress'; message: string; project?: string; elapsed_seconds?: number }
+  | { event: 'deduplicating'; message: string; project?: string; elapsed_seconds?: number }
+  | { event: 'complete'; message: string; project?: string; data: CodebaseScanResult; elapsed_seconds?: number }
+  | { event: 'error'; message: string; project?: string; error?: string };
+
+// ─── Unified Scan Types ──────────────────────────────────────────────────────
+
+export interface UnifiedScanStartParams {
+  target: string;
+  modules?: string[];
+  scan_profile?: 'quick' | 'standard' | 'deep';
+  intensity?: 'low' | 'normal' | 'aggressive';
+  codebase_source_type?: 'path' | 'zip';
+  codebase_path?: string;
+}
+
+export interface UnifiedScanRecordData {
+  id: string;
+  target: string;
+  cleaned_target?: string;
+  resolved_ip?: string;
+  codebase_source_type: string;
+  codebase_path?: string;
+  codebase_zip_name?: string;
+  scan_profile: 'quick' | 'standard' | 'deep';
+  intensity: 'low' | 'normal' | 'aggressive';
+  status: 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'ABORTED';
+  progress_percent: number;
+  current_module_id?: string;
+  overall_score: number;
+  score_grade: string;
+  risk_rating: string;
+  active_modules: string[];
+  findings_summary: SeverityCount & { total: number };
+  module_statuses: Record<string, {
+    id: string;
+    status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
+    progress_percent: number;
+    current_step: string;
+    duration_seconds?: number;
+    findings_count?: SeverityCount;
+    summary_text?: string;
+  }>;
+  module_results?: Record<string, any>;
+  findings: Array<{
+    id: string;
+    moduleId: string;
+    moduleName: string;
+    title: string;
+    severity: 'critical' | 'high' | 'medium' | 'low' | 'info';
+    cvss: number;
+    cwe?: string;
+    location: string;
+    description: string;
+    remediation: string;
+  }>;
+  logs: Array<{
+    id: string;
+    timestamp: string;
+    module_id: string;
+    module_name: string;
+    level: 'info' | 'success' | 'warn' | 'error';
+    message: string;
+  }>;
+  error_message?: string;
+  created_at: string;
+  started_at?: string;
+  completed_at?: string;
+}
+
+export type UnifiedScanStreamEvent =
+  | { event: 'init'; scan_id: string; target: string; status: string; progress_percent: number; active_modules: string[] }
+  | { event: 'log'; scan_id: string; log: { id: string; timestamp: string; module_id: string; module_name: string; level: 'info' | 'success' | 'warn' | 'error'; message: string }; progress_percent: number; current_module_id: string; module_statuses: Record<string, any> }
+  | { event: 'complete' | 'finished'; scan_id: string; status: string; progress_percent: number; overall_score: number; score_grade: string; risk_rating: string; findings_summary: any; module_statuses: any; findings: any[]; elapsed_seconds: number }
+  | { event: 'error'; message: string };
+
+// ─── Security Command Center Dashboard Types ────────────────────────────────
+
+export interface DashboardAssetSummary {
+  total_assets: number;
+  total_targets: number;
+  domains_count: number;
+  ips_count: number;
+  open_ports_count: number;
+  services_count: number;
+  technologies_count: number;
+  endpoints_count: number;
+  apis_count: number;
+  tls_configs_count: number;
+  correlated_findings_count: number;
+}
+
+export interface DashboardRecentScan {
+  id: string;
+  target: string;
+  scan_mode: string;
+  intensity: string;
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'aborted' | string;
+  progress: number;
+  total_modules: number;
+  completed_modules: number;
+  findings_count: number;
+  risk_score: number;
+  created_at: string | null;
+  completed_at: string | null;
+}
+
+export interface DashboardHighRiskAsset {
+  asset: string;
+  target: string;
+  type: 'host' | 'port' | 'endpoint' | 'technology' | string;
+  total_findings: number;
+  critical_count: number;
+  high_count: number;
+  medium_count: number;
+  low_count: number;
+  max_cvss: number;
+  risk_score: number;
+  source_modules: string[];
+}
+
+export interface DashboardTargetOverview {
+  target: string;
+  risk_score: number;
+  risk_level: string;
+  grade: string;
+  total_findings: number;
+  critical_count: number;
+  high_count: number;
+  last_scanned: string | null;
+  last_scan_status: string;
+}
+
+export interface DashboardSummaryData {
+  status: string;
+  timestamp: string;
+  selected_target: string;
+  risk: RiskScoreProfile;
+  attack_surface: DashboardAssetSummary;
+  recent_scans: DashboardRecentScan[];
+  top_vulnerabilities: Finding[];
+  high_risk_assets: DashboardHighRiskAsset[];
+  module_risk_breakdown: Record<string, ModuleRiskDetail>;
+  risk_trends: RiskTrendPoint[];
+  targets_overview: DashboardTargetOverview[];
+}
+
+
+
+
+
 
 
 

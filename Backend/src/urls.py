@@ -1,18 +1,5 @@
 """
 URL configuration for src project.
-
-The `urlpatterns` list routes URLs to views. For more information please see:
-    https://docs.djangoproject.com/en/5.1/topics/http/urls/
-Examples:
-Function views
-    1. Add an import:  from my_app import views
-    2. Add a URL to urlpatterns:  path('', views.home, name='home')
-Class-based views
-    1. Add an import:  from other_app.views import Home
-    2. Add a URL to urlpatterns:  path('', Home.as_view(), name='home')
-Including another URLconf
-    1. Import the include() function: from django.urls import include, path
-    2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from django.contrib import admin
 from django.urls import path, include
@@ -31,6 +18,18 @@ urlpatterns = [
     path('', include('api_analysis.urls')),
     path('api/', include('attack_surface.urls')),
     path('', include('attack_surface.urls')),
+    path('api/', include('codebase_analysis.urls')),
+    path('', include('codebase_analysis.urls')),
+    path('api/unified-scan/', include('unified_scan.urls')),
+    path('unified-scan/', include('unified_scan.urls')),
+    path('api/findings/', include('unified_scan.urls_findings')),
+    path('findings/', include('unified_scan.urls_findings')),
+    path('api/risk/', include('unified_scan.urls_risk')),
+    path('risk/', include('unified_scan.urls_risk')),
+    path('api/attack-surface/', include('unified_scan.urls_correlation')),
+    path('attack-surface/', include('unified_scan.urls_correlation')),
+    path('api/dashboard/', include('unified_scan.urls_dashboard')),
+    path('dashboard/', include('unified_scan.urls_dashboard')),
+    path('api/reports/', include('unified_scan.urls_reports')),
+    path('reports/', include('unified_scan.urls_reports')),
 ]
-
-

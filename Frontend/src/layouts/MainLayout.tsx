@@ -14,7 +14,12 @@ import {
   ShieldCheck,
   Lock,
   Braces,
-  Layers
+  Layers,
+  FileCode2,
+  Sparkles,
+  ShieldAlert,
+  LayoutDashboard,
+  FileText
 } from 'lucide-react';
 
 interface MainLayoutProps {
@@ -32,16 +37,17 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
 
   // Ping backend to show live API health
   useEffect(() => {
+    const apiBase = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api').replace(/\/$/, '');
     const checkHealth = async () => {
       try {
-        const res = await fetch('http://127.0.0.1:8000/check-ports/?target=127.0.0.1&mode=quick');
+        const res = await fetch(`${apiBase}/dashboard/summary/`);
         setBackendOnline(res.ok);
       } catch {
         setBackendOnline(false);
       }
     };
     checkHealth();
-    const interval = setInterval(checkHealth, 8000);
+    const interval = setInterval(checkHealth, 10000);
     return () => clearInterval(interval);
   }, []);
 
@@ -59,38 +65,190 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
         flexShrink: 0
       }}>
         {/* Brand Header */}
-        <div>
+        <div style={{
+          padding: '20px 22px',
+          borderBottom: '1px solid var(--border-default)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          flexShrink: 0
+        }}>
           <div style={{
-            padding: '20px 22px',
-            borderBottom: '1px solid var(--border-default)',
+            width: 34,
+            height: 34,
+            borderRadius: 8,
+            background: 'linear-gradient(135deg, #1f6feb 0%, #388bfd 100%)',
             display: 'flex',
             alignItems: 'center',
-            gap: 12
+            justifyContent: 'center',
+            boxShadow: '0 0 12px rgba(56,139,253,0.35)'
           }}>
-            <div style={{
-              width: 34,
-              height: 34,
-              borderRadius: 8,
-              background: 'linear-gradient(135deg, #1f6feb 0%, #388bfd 100%)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              boxShadow: '0 0 12px rgba(56,139,253,0.35)'
-            }}>
-              <Shield style={{ width: 18, height: 18, color: '#fff' }} />
-            </div>
-            <div>
-              <h2 style={{ fontSize: 16, fontWeight: 800, color: 'var(--fg-default)', margin: 0, letterSpacing: '-0.02em' }}>
-                AttackLens
-              </h2>
-              <span style={{ fontSize: 10, color: 'var(--fg-subtle)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
-                Security Recon Suite
-              </span>
-            </div>
+            <Shield style={{ width: 18, height: 18, color: '#fff' }} />
           </div>
+          <div>
+            <h2 style={{ fontSize: 16, fontWeight: 800, color: 'var(--fg-default)', margin: 0, letterSpacing: '-0.02em' }}>
+              AttackLens
+            </h2>
+            <span style={{ fontSize: 10, color: 'var(--fg-subtle)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+              Security Recon Suite
+            </span>
+          </div>
+        </div>
 
-          {/* Navigation Items */}
-          <nav style={{ padding: '16px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {/* Navigation Items (Scrollable) */}
+        <nav style={{
+          padding: '16px 12px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 6,
+          flex: 1,
+          minHeight: 0,
+          overflowY: 'auto',
+          overflowX: 'hidden'
+        }}>
+            {/* Executive Risk Dashboard */}
+            <button
+              onClick={() => setActivePage('dashboard')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '10px 14px',
+                borderRadius: 6,
+                border: activePage === 'dashboard' ? '1px solid rgba(56, 189, 248, 0.5)' : '1px solid transparent',
+                background: activePage === 'dashboard'
+                  ? 'linear-gradient(135deg, rgba(56, 189, 248, 0.2) 0%, rgba(99, 102, 241, 0.2) 100%)'
+                  : 'transparent',
+                color: activePage === 'dashboard' ? '#ffffff' : 'var(--fg-default)',
+                fontWeight: 700,
+                fontSize: 13,
+                cursor: 'pointer',
+                textAlign: 'left',
+                width: '100%',
+                transition: 'all 0.15s ease',
+                marginBottom: 2
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <LayoutDashboard style={{
+                  width: 16,
+                  height: 16,
+                  color: activePage === 'dashboard' ? '#38bdf8' : '#60a5fa'
+                }} />
+                <span>Executive Risk</span>
+              </div>
+              <span style={{
+                fontSize: 9,
+                fontWeight: 800,
+                padding: '2px 6px',
+                borderRadius: 10,
+                background: 'rgba(56, 189, 248, 0.15)',
+                color: '#38bdf8',
+                border: '1px solid rgba(56, 189, 248, 0.3)',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em'
+              }}>
+                OVERVIEW
+              </span>
+            </button>
+
+            {/* Unified Scan Master Button */}
+            <button
+              onClick={() => setActivePage('unified-scan')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '10px 14px',
+                borderRadius: 6,
+                border: activePage === 'unified-scan' ? '1px solid rgba(137, 87, 229, 0.5)' : '1px solid transparent',
+                background: activePage === 'unified-scan'
+                  ? 'linear-gradient(135deg, rgba(31, 111, 235, 0.25) 0%, rgba(137, 87, 229, 0.25) 100%)'
+                  : 'transparent',
+                color: activePage === 'unified-scan' ? '#ffffff' : 'var(--fg-default)',
+                fontWeight: 700,
+                fontSize: 13,
+                cursor: 'pointer',
+                textAlign: 'left',
+                width: '100%',
+                transition: 'all 0.15s ease',
+                marginBottom: 6
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <Sparkles style={{
+                  width: 16,
+                  height: 16,
+                  color: activePage === 'unified-scan' ? '#a371f7' : '#8957e5'
+                }} />
+                <span>Unified Scan</span>
+              </div>
+              <span style={{
+                fontSize: 9,
+                fontWeight: 800,
+                padding: '2px 6px',
+                borderRadius: 10,
+                background: 'linear-gradient(135deg, #1f6feb 0%, #8957e5 100%)',
+                color: '#fff',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em'
+              }}>
+                ALL-IN-1
+              </span>
+            </button>
+
+            {/* Unified Findings / Vulnerabilities Engine */}
+            <button
+              onClick={() => setActivePage('vulnerabilities')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '10px 14px',
+                borderRadius: 6,
+                border: activePage === 'vulnerabilities' ? '1px solid rgba(239, 68, 68, 0.5)' : '1px solid transparent',
+                background: activePage === 'vulnerabilities'
+                  ? 'linear-gradient(135deg, rgba(239, 68, 68, 0.2) 0%, rgba(249, 115, 22, 0.2) 100%)'
+                  : 'transparent',
+                color: activePage === 'vulnerabilities' ? '#ffffff' : 'var(--fg-default)',
+                fontWeight: 700,
+                fontSize: 13,
+                cursor: 'pointer',
+                textAlign: 'left',
+                width: '100%',
+                transition: 'all 0.15s ease',
+                marginBottom: 6
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <ShieldAlert style={{
+                  width: 16,
+                  height: 16,
+                  color: activePage === 'vulnerabilities' ? '#ef4444' : '#f87171'
+                }} />
+                <span>Vulnerabilities</span>
+              </div>
+              <span style={{
+                fontSize: 9,
+                fontWeight: 800,
+                padding: '2px 6px',
+                borderRadius: 10,
+                background: 'rgba(239, 68, 68, 0.15)',
+                color: '#ef4444',
+                border: '1px solid rgba(239, 68, 68, 0.3)',
+                textTransform: 'uppercase',
+                letterSpacing: '0.05em'
+              }}>
+                FINDINGS
+              </span>
+            </button>
+
+            <div style={{
+              height: 1,
+              background: 'var(--border-default)',
+              margin: '2px 0 6px 0'
+            }} />
+
             <button
               onClick={() => setActivePage('ports')}
               style={{
@@ -253,6 +411,29 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
             </button>
 
             <button
+              onClick={() => setActivePage('web-app')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: '10px 14px',
+                borderRadius: 6,
+                border: 'none',
+                background: activePage === 'web-app' ? 'var(--bg-emphasis)' : 'transparent',
+                color: activePage === 'web-app' ? '#eab308' : 'var(--fg-muted)',
+                fontWeight: activePage === 'web-app' ? 600 : 500,
+                fontSize: 13,
+                cursor: 'pointer',
+                textAlign: 'left',
+                width: '100%',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              <Globe style={{ width: 16, height: 16, color: activePage === 'web-app' ? '#eab308' : 'var(--fg-muted)' }} />
+              Web App Crawl & Audit
+            </button>
+
+            <button
               onClick={() => setActivePage('attack-surface')}
               style={{
                 display: 'flex',
@@ -274,10 +455,53 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
               <Layers style={{ width: 16, height: 16, color: activePage === 'attack-surface' ? '#d29922' : 'var(--fg-muted)' }} />
               Attack Surface Map
             </button>
+
+            <button
+              onClick={() => setActivePage('codebase-analysis')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: '10px 14px',
+                borderRadius: 6,
+                border: 'none',
+                background: activePage === 'codebase-analysis' ? 'var(--bg-emphasis)' : 'transparent',
+                color: activePage === 'codebase-analysis' ? '#ff7b72' : 'var(--fg-muted)',
+                fontWeight: activePage === 'codebase-analysis' ? 600 : 500,
+                fontSize: 13,
+                cursor: 'pointer',
+                textAlign: 'left',
+                width: '100%',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              <FileCode2 style={{ width: 16, height: 16, color: activePage === 'codebase-analysis' ? '#ff7b72' : 'var(--fg-muted)' }} />
+              Codebase Security (SAST)
+            </button>
+
+            <button
+              onClick={() => setActivePage('reports')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                padding: '10px 14px',
+                borderRadius: 6,
+                border: 'none',
+                background: activePage === 'reports' ? 'var(--bg-emphasis)' : 'transparent',
+                color: activePage === 'reports' ? '#38bdf8' : 'var(--fg-muted)',
+                fontWeight: activePage === 'reports' ? 600 : 500,
+                fontSize: 13,
+                cursor: 'pointer',
+                textAlign: 'left',
+                width: '100%',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              <FileText style={{ width: 16, height: 16, color: activePage === 'reports' ? '#38bdf8' : 'var(--fg-muted)' }} />
+              Security Reports
+            </button>
           </nav>
-        </div>
-
-
 
         {/* Backend Server Status Pill in Sidebar Bottom */}
         <div style={{
@@ -286,7 +510,8 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
           background: 'var(--bg-inset)',
           display: 'flex',
           flexDirection: 'column',
-          gap: 6
+          gap: 6,
+          flexShrink: 0
         }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontSize: 11, color: 'var(--fg-muted)', fontWeight: 600, textTransform: 'uppercase' }}>
@@ -310,7 +535,7 @@ export const MainLayout: React.FC<MainLayoutProps> = ({
             </div>
           </div>
           <span style={{ fontSize: 10, color: 'var(--fg-subtle)', fontFamily: 'JetBrains Mono, monospace' }}>
-            http://127.0.0.1:8000
+            {import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api'}
           </span>
         </div>
       </aside>
